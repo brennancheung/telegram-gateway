@@ -1,0 +1,12 @@
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+vendor/tdlib/src/
+vendor/tdlib/build/
+vendor/tdlib/lib/
+vendor/tdlib/include/
+.env
+*.local.json
+.DS_Store
