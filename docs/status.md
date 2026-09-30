@@ -1,6 +1,6 @@
 # Status
 
-Updated: 2026-09-29
+Updated: 2026-09-30
 
 ## Built
 
@@ -49,13 +49,22 @@ daemon has been run against its own API with `curl` and `tgw` on a machine witho
 - `tgw` daemon-backed commands — `daemon install|uninstall|status|logs` (LaunchAgent from
   `launchd/…plist`), `health`, `monitor list|add|remove|folders`, `requests
   list|approve|deny`, `grants list|show|revoke|resume-webhook`, `events tail|page`, `secrets
-  show|regenerate-admin-token|import-keychain`. The direct
+  show|regenerate-admin-token`. The direct
   commands refuse to run while the daemon holds the lock.
 - `GatewayTestSupport` — `FakeTDLib` (scripted from fixtures), `Fixtures` (TDLib objects with
   the field names in `td_api.tl`), `FakeWebhookClient`, `FakeTelegram`, `ManualClock`.
 - Docs: `development.md` (daemon, launchd, data layout, every `tgw` command with output),
   `api.md` and `events.md` corrected where the implementation had to deviate (listed in
   the "Deviations" section of each).
+
+**Integration (2026-09-30).** The daemon, the menu bar app and `tgw` were run together on the
+owner's machine: the daemon on the real `TGW_HOME`, the app's `--snapshot --live` flow against
+it. The app reaches the daemon, reads the admin token from `secrets.json` without a Keychain
+prompt, and shows Setup. The daemon is installed as a LaunchAgent with `tgw daemon install`.
+Not yet done: the first live login (needs `api_id`/`api_hash`), and the app's own
+`SMAppService` registration reported "Registered, but launchd cannot find the agent" against
+the development bundle; the `tgw daemon install` path is used instead until the daemon is
+bundled into the app.
 
 ## In progress
 
@@ -99,9 +108,9 @@ Everything on the TDLib edge was written from the schema, not observed:
 ## Open questions
 
 - Secrets from the foundation step (`tdlib-db-key`) and from the daemon's first smoke run
-  (`admin-token`) are still in the login Keychain; nothing reads them any more. Reading them
-  from a fresh build would prompt, so they were not migrated. `tgw secrets import-keychain`
-  does it on request; otherwise log in again and the file store is populated from scratch.
+  (`admin-token`) are still in the login Keychain. Nothing reads or migrates them (reading
+  would prompt); they can be deleted from Keychain Access at leisure. Logging in again
+  populates `secrets.json` from scratch.
 
 - The webhook secret is stored in plain text in `gateway.sqlite` because the gateway must
   sign with it; the token appears in `access_requests` for its `10:00` hand-out window and is
