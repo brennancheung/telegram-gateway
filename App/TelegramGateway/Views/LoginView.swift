@@ -1,12 +1,11 @@
 import SwiftUI
 
-/// Drives the Telegram login through `/v1/admin/auth/*`. QR code first; "Use phone number
-/// instead" switches to phone → code → 2FA password. States that need typing (code,
-/// password, e-mail) are shown whichever way the login started, because a QR scan on an
-/// account with two-step verification still ends in `wait_password`.
+/// Step 2: sign in to Telegram through `/v1/admin/auth/*`. The QR code is the screen; the
+/// phone route is one link away. Code, password and e-mail steps are the same centred form
+/// whichever way sign-in started, because a QR scan on an account with two-step
+/// verification still ends at the password.
 struct LoginView: View {
     @Environment(AppModel.self) private var model
-    @State private var usePhone = false
     @State private var phone = ""
     @State private var code = ""
     @State private var password = ""
@@ -16,100 +15,107 @@ struct LoginView: View {
     @State private var qrToken: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                switch model.authState {
-                case .waitPhoneNumber, .waitQRConfirmation:
-                    if usePhone { phoneStep } else { qrStep }
-                case .waitCode:
-                    codeStep
-                case .waitPassword:
-                    passwordStep
-                case .waitEmailAddress:
-                    emailStep
-                case .waitEmailCode:
-                    emailCodeStep
-                case .waitRegistration:
-                    registrationStep
-                case .ready:
-                    ProgressView("Logged in, loading…")
-                case .loggingOut, .closed, .unknown:
-                    otherStep
-                }
-                if let error = model.loginError {
-                    ErrorLine(message: error)
-                }
+        Group {
+            switch model.authState {
+            case .waitPhoneNumber, .waitQRConfirmation:
+                if model.loginMode == .phone { phoneStep } else { qrStep }
+            case .waitCode:
+                codeStep
+            case .waitPassword:
+                passwordStep
+            case .waitEmailAddress:
+                emailStep
+            case .waitEmailCode:
+                emailCodeStep
+            case .waitRegistration:
+                registrationStep
+            case .ready, .loggingOut:
+                ProgressView().controlSize(.small)
+            case .closed, .unknown:
+                stuckStep
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: model.screen) {
             // docs/api.md: poll GET /v1/admin/auth every 2s while a QR code is displayed.
             while !Task.isCancelled {
                 await model.refreshAuth()
-                // Ask for a QR once per attempt; after a failure (e.g. Telegram rejecting the
-                // api_id) wait for the owner's New code instead of retrying every 2s.
-                if !usePhone, model.authState == .waitPhoneNumber, !model.loginBusy, model.loginError == nil {
+                // Ask for a code once per attempt; after a failure wait for Refresh instead
+                // of retrying every 2s.
+                if model.loginMode == .qr, model.authState == .waitPhoneNumber, !model.loginBusy, model.loginError == nil {
                     await model.requestQR()
                 }
                 try? await Task.sleep(for: .seconds(2))
             }
         }
         .onAppear { refreshQR(model.auth?.qrLink) }
-        .onChange(of: model.auth?.qrLink) { _, link in
-            refreshQR(link)
-        }
+        .onChange(of: model.auth?.qrLink) { _, link in refreshQR(link) }
     }
 
     // MARK: QR
 
-    @ViewBuilder
     private var qrStep: some View {
-        Text("Scan with your phone")
-            .font(.headline)
-        Text("Open Telegram on your phone → Settings → Devices → Link Desktop Device, then point the camera at this code.")
-            .font(.callout)
-            .fixedSize(horizontal: false, vertical: true)
-        HStack {
-            Spacer()
+        VStack(spacing: 14) {
+            VStack(spacing: 4) {
+                if !model.onboardingDone { StepIndicator(step: 2) }
+                Text("Scan to sign in")
+                    .font(TypeScale.screenTitle)
+            }
             ZStack {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(.white)
-                    .frame(width: 216, height: 216)
-                if let qrImage {
+                if let qrImage, model.loginError == nil {
                     Image(decorative: qrImage, scale: 1)
                         .resizable()
                         .interpolation(.none)
-                        .frame(width: 200, height: 200)
-                        .accessibilityLabel("QR code for Telegram login")
-                } else if model.loginError != nil {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle)
-                        .foregroundStyle(.secondary)
+                        .padding(12)
+                        .accessibilityLabel("QR code for Telegram sign-in")
+                } else if let error = model.loginError {
+                    VStack(spacing: 8) {
+                        Text("Couldn't get a code")
+                            .font(TypeScale.rowTitle)
+                            .foregroundStyle(.black)
+                        Text(error)
+                            .font(TypeScale.secondary)
+                            .foregroundStyle(.black.opacity(0.6))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(4)
+                        Button("Refresh") { Task { await model.requestQR() } }
+                            .buttonStyle(.primary)
+                            .disabled(model.loginBusy)
+                    }
+                    .padding(16)
                 } else {
-                    ProgressView()
+                    ProgressView().controlSize(.small)
                 }
             }
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(.quaternary))
-            Spacer()
+            .frame(width: 224, height: 224)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.quaternary))
+
+            VStack(alignment: .leading, spacing: 5) {
+                numbered(1, "Open Telegram on your phone")
+                numbered(2, "Settings → Devices → Link Desktop Device")
+                numbered(3, "Point it at this code")
+            }
+
+            Button("Use phone number instead") {
+                model.loginError = nil
+                model.loginMode = .phone
+            }
+            .buttonStyle(.link)
+            .font(TypeScale.body)
         }
-        Text("The code renews itself every 30 seconds or so; keep this panel open until the phone confirms.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        if let link = model.auth?.qrLink {
-            Text(link)
-                .font(.caption2.monospaced())
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
-        }
-        HStack {
-            Button("New code") { Task { await model.requestQR() } }
-                .disabled(model.loginBusy)
-            Spacer()
-            Button("Use phone number instead") { usePhone = true }
+        .padding(PanelSize.margin)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func numbered(_ number: Int, _ text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("\(number)")
+                .font(TypeScale.sectionLabel)
+                .foregroundStyle(.secondary)
+                .frame(width: 10, alignment: .trailing)
+            Text(text)
+                .font(TypeScale.body)
         }
     }
 
@@ -125,178 +131,184 @@ struct LoginView: View {
         qrImage = QRCodeImage.make(link, scale: 8)
     }
 
-    // MARK: Phone, code, password
+    // MARK: Forms
 
-    @ViewBuilder
     private var phoneStep: some View {
-        Text("Log in with your phone number")
-            .font(.headline)
-        Text("Telegram sends a code to the Telegram app on another device, or by SMS.")
-            .font(.callout)
-        TextField("+15551234567", text: $phone)
-            .textFieldStyle(.roundedBorder)
-            .onSubmit { submitPhone() }
-        HStack {
-            Button("Use QR code instead") {
-                usePhone = false
-            }
-            Spacer()
-            Button("Send code") { submitPhone() }
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.loginBusy || phone.trimmingCharacters(in: .whitespaces).count < 8)
+        LoginForm(
+            title: "Sign in with your phone number",
+            sentence: "Telegram sends a login code to this number.",
+            hint: "Include the country code.",
+            button: "Send code",
+            canSubmit: phone.trimmingCharacters(in: .whitespaces).count >= 8,
+            submit: { Task { await model.submitPhone(phone) } },
+            back: ("Use QR code instead", { model.loginError = nil; model.loginMode = .qr })
+        ) {
+            TextField("", text: $phone, prompt: Text("+1 555 123 4567"))
         }
     }
 
-    private func submitPhone() {
-        Task { await model.submitPhone(phone) }
-    }
-
-    @ViewBuilder
     private var codeStep: some View {
-        Text("Enter the login code")
-            .font(.headline)
-        Text(codeExplanation)
-            .font(.callout)
-            .fixedSize(horizontal: false, vertical: true)
-        TextField("12345", text: $code)
-            .textFieldStyle(.roundedBorder)
-            .font(.title3.monospaced())
-            .onSubmit { submitCode() }
-        HStack {
-            Button("Start over") { Task { await model.requestQR(); usePhone = false } }
-                .disabled(model.loginBusy)
-            Spacer()
-            Button("Continue") { submitCode() }
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.loginBusy || code.trimmingCharacters(in: .whitespaces).count < 4)
+        LoginForm(
+            title: "Enter the code",
+            sentence: "Telegram just sent you a login code.",
+            hint: Wording.codeDestination(type: model.auth?.codeType, phone: model.auth?.phoneHint),
+            button: "Continue",
+            canSubmit: code.trimmingCharacters(in: .whitespaces).count >= 4,
+            submit: { Task { await model.submitCode(code) } },
+            back: ("Back", { Task { await model.restartLogin(mode: .phone) } })
+        ) {
+            TextField("", text: $code, prompt: Text("12345"))
         }
     }
 
-    private var codeExplanation: String {
-        var text = "Telegram sent a code"
-        if let hint = model.auth?.phoneHint { text += " for \(hint)" }
-        switch model.auth?.codeType {
-        case "sms": text += " by SMS."
-        case "call": text += " by phone call."
-        case "telegram_message": text += " to the Telegram app on your other devices."
-        default: text += " to your other Telegram devices or by SMS."
-        }
-        return text
-    }
-
-    private func submitCode() {
-        Task { await model.submitCode(code) }
-    }
-
-    @ViewBuilder
     private var passwordStep: some View {
-        Text("Two-step verification")
-            .font(.headline)
-        Text("This account has a two-step verification password (set in Telegram → Settings → Privacy and Security). It is sent to Telegram and never stored.")
-            .font(.callout)
-            .fixedSize(horizontal: false, vertical: true)
-        SecureField("Password", text: $password)
-            .textFieldStyle(.roundedBorder)
-            .onSubmit { submitPassword() }
-        if let hint = model.auth?.passwordHint, !hint.isEmpty {
-            Text("Hint: \(hint)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        HStack {
-            Spacer()
-            Button("Log in") { submitPassword() }
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.loginBusy || password.isEmpty)
+        LoginForm(
+            title: "Enter your password",
+            sentence: "This account has two-step verification turned on.",
+            hint: model.auth?.passwordHint.flatMap { $0.isEmpty ? nil : "Hint: \($0)" },
+            button: "Sign in",
+            canSubmit: !password.isEmpty,
+            submit: {
+                Task {
+                    await model.submitPassword(password)
+                    if model.loginError != nil { password = "" }
+                }
+            },
+            back: ("Start over", { Task { await model.restartLogin(mode: .qr) } })
+        ) {
+            SecureField("", text: $password, prompt: Text("Password"))
         }
     }
 
-    private func submitPassword() {
-        Task {
-            await model.submitPassword(password)
-            if model.loginError != nil { password = "" }
-        }
-    }
-
-    // MARK: E-mail
-
-    @ViewBuilder
     private var emailStep: some View {
-        Text("Login e-mail")
-            .font(.headline)
-        Text("Telegram asks for the e-mail address that receives login codes for this account.")
-            .font(.callout)
-            .fixedSize(horizontal: false, vertical: true)
-        TextField("you@example.com", text: $email)
-            .textFieldStyle(.roundedBorder)
-            .onSubmit { Task { await model.submitEmail(email) } }
-        HStack {
-            Spacer()
-            Button("Continue") { Task { await model.submitEmail(email) } }
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.loginBusy || !email.contains("@"))
+        LoginForm(
+            title: "Enter your login email",
+            sentence: "Telegram sends this account's login codes by email.",
+            hint: nil,
+            button: "Continue",
+            canSubmit: email.contains("@"),
+            submit: { Task { await model.submitEmail(email) } },
+            back: ("Start over", { Task { await model.restartLogin(mode: .qr) } })
+        ) {
+            TextField("", text: $email, prompt: Text("you@example.com"))
         }
     }
 
-    @ViewBuilder
     private var emailCodeStep: some View {
-        Text("E-mail code")
-            .font(.headline)
-        Text("Enter the code Telegram e-mailed you.")
-            .font(.callout)
-        TextField("Code", text: $emailCode)
-            .textFieldStyle(.roundedBorder)
-            .font(.title3.monospaced())
-            .onSubmit { Task { await model.submitEmailCode(emailCode) } }
-        HStack {
-            Spacer()
-            Button("Continue") { Task { await model.submitEmailCode(emailCode) } }
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.loginBusy || emailCode.isEmpty)
+        LoginForm(
+            title: "Enter the email code",
+            sentence: "Telegram just emailed you a login code.",
+            hint: nil,
+            button: "Continue",
+            canSubmit: !emailCode.trimmingCharacters(in: .whitespaces).isEmpty,
+            submit: { Task { await model.submitEmailCode(emailCode) } },
+            back: ("Start over", { Task { await model.restartLogin(mode: .qr) } })
+        ) {
+            TextField("", text: $emailCode, prompt: Text("Code"))
         }
     }
 
-    // MARK: Other
-
-    @ViewBuilder
     private var registrationStep: some View {
-        Text("No Telegram account for this number")
-            .font(.headline)
-        Text("Telegram would create a new account for it, which the gateway never does. Check the number, or log in with the QR code from a phone that already has your account.")
-            .font(.callout)
-            .fixedSize(horizontal: false, vertical: true)
-        HStack {
-            Spacer()
-            Button("Start over") { Task { await model.requestQR(); usePhone = false } }
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.loginBusy)
+        LoginForm(
+            title: "No Telegram account for this number",
+            sentence: "The gateway only signs in to an account that already exists.",
+            hint: nil,
+            button: "Try another number",
+            canSubmit: true,
+            submit: { Task { await model.restartLogin(mode: .phone) } },
+            back: ("Use QR code instead", { Task { await model.restartLogin(mode: .qr) } })
+        ) {
+            EmptyView()
         }
     }
 
-    @ViewBuilder
-    private var otherStep: some View {
-        Text(model.authState.label)
-            .font(.headline)
-        Text(model.authState == .loggingOut
-             ? "The gateway is ending its Telegram session. This takes a few seconds."
-             : "The gateway's Telegram client is in an unexpected state. Restarting the gateway usually clears it.")
-            .font(.callout)
-            .fixedSize(horizontal: false, vertical: true)
-        HStack {
-            Spacer()
-            Button("Restart gateway") { model.restartGateway() }
+    private var stuckStep: some View {
+        LoginForm(
+            title: "Telegram isn't responding",
+            sentence: "Restarting the gateway reconnects it.",
+            hint: nil,
+            button: "Restart gateway",
+            canSubmit: true,
+            submit: { model.restartGateway() },
+            back: nil
+        ) {
+            EmptyView()
         }
+    }
+}
+
+/// One sign-in step: title, one sentence, the field, a hint under it, the button. Vertically
+/// centred so there is no blank half-panel under a top-anchored form. Return submits.
+struct LoginForm<Field: View>: View {
+    @Environment(AppModel.self) private var model
+    var title: String
+    var sentence: String
+    var hint: String?
+    var button: String
+    var canSubmit: Bool
+    var submit: () -> Void
+    var back: (title: String, action: () -> Void)?
+    @ViewBuilder var field: Field
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                if !model.onboardingDone { StepIndicator(step: 2) }
+                Text(title)
+                    .font(TypeScale.screenTitle)
+                Text(sentence)
+                    .font(TypeScale.body)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                field
+                    .textFieldStyle(.roundedBorder)
+                    .font(TypeScale.body)
+                    .controlSize(.large)
+                    .focused($focused)
+                    .onSubmit { if canSubmit, !model.loginBusy { submit() } }
+                if let error = model.loginError {
+                    Text(error)
+                        .font(TypeScale.secondary)
+                        .foregroundStyle(Tone.failed.color)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let hint {
+                    Text(hint)
+                        .font(TypeScale.secondary)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            HStack {
+                if let back {
+                    Button(back.title, action: back.action)
+                        .buttonStyle(.link)
+                        .font(TypeScale.body)
+                }
+                Spacer()
+                if model.loginBusy { ProgressView().controlSize(.small) }
+                Button(button, action: submit)
+                    .buttonStyle(.primary)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canSubmit || model.loginBusy)
+            }
+        }
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .offset(y: -24)
+        .onAppear { focused = true }
     }
 }
 
 #Preview("QR") {
-    RootView().environment(AppModel.preview(.waitingForQR))
+    RootView().environment(AppModel.preview(.waitingForQR, onboarded: false))
 }
 
-#Preview("Phone: code sent") {
-    RootView().environment(AppModel.preview(.waitingForCode))
+#Preview("Code") {
+    RootView().environment(AppModel.preview(.waitingForCode, onboarded: false))
 }
 
-#Preview("2FA password") {
-    RootView().environment(AppModel.preview(.waitingForPassword))
+#Preview("Password") {
+    RootView().environment(AppModel.preview(.waitingForPassword, onboarded: false))
 }

@@ -2,10 +2,11 @@
 import AppKit
 import SwiftUI
 
-/// Development only: `TelegramGateway --snapshot <directory>` renders every screen with the
-/// fake gateway into PNG files and quits; add `--live` to drive the real HTTP client against
-/// whatever answers on the configured port (the daemon, or a stand-in) through a scripted
-/// login → chats → access flow. Used to check the UI where nobody can click the menu bar.
+/// Development only: `TelegramGateway --snapshot <directory>` renders every screen and state
+/// with the fake gateway into PNG files (light and dark) and quits; add `--live` to drive the
+/// real HTTP client against whatever answers on the configured port through a scripted
+/// sign-in → chats → apps flow. Used to check the UI where nobody can click the menu bar.
+/// Snapshot runs never read the Keychain and never persist anything to the app's defaults.
 @MainActor
 enum SnapshotRunner {
     static var requestedDirectory: URL? {
@@ -32,34 +33,153 @@ enum SnapshotRunner {
         }
     }
 
-    // MARK: Fake gateway: one image per screen
+    // MARK: Fake gateway: one image per screen and state
+
+    /// Every screen and state, in the order the owner meets them.
+    static let cases: [(String, @MainActor () async -> AppModel)] = [
+        ("01-connect", {
+            AppModel.preview(.unreachable, credentials: false, token: false, onboarded: false)
+        }),
+        ("02-connect-didnt-start", {
+            let model = AppModel.preview(.unreachable, onboarded: false)
+            model.startPhase = .failed("Address already in use: another program is using port 41414.")
+            return model
+        }),
+        ("03-signin-qr", {
+            AppModel.preview(.waitingForQR, onboarded: false)
+        }),
+        ("04-signin-qr-failed", {
+            let model = AppModel.preview(.loggedOut, onboarded: false)
+            model.loginError = "Telegram didn't answer. Check the internet connection."
+            return model
+        }),
+        ("05-signin-phone", {
+            let model = AppModel.preview(.waitingForQR, onboarded: false)
+            model.loginMode = .phone
+            return model
+        }),
+        ("06-signin-code", {
+            AppModel.preview(.waitingForCode, onboarded: false)
+        }),
+        ("07-signin-password", {
+            AppModel.preview(.waitingForPassword, onboarded: false)
+        }),
+        ("08-signin-password-wrong", {
+            let model = AppModel.preview(.waitingForPassword, onboarded: false)
+            await model.refresh()
+            await model.refreshAuth()
+            await model.submitPassword("wrong")
+            return model
+        }),
+        ("09-chats-first-run", {
+            let model = AppModel.preview(.loggedInEmpty, onboarded: false)
+            model.tab = .chats
+            return model
+        }),
+        ("10-overview", {
+            AppModel.preview(.loggedIn)
+        }),
+        ("11-overview-quiet", {
+            AppModel.preview(.loggedInQuiet)
+        }),
+        ("12-overview-reconnecting", {
+            AppModel.preview(.reconnecting)
+        }),
+        ("13-overview-no-chats", {
+            AppModel.preview(.loggedInEmpty)
+        }),
+        ("14-gateway-down", {
+            AppModel.preview(.unreachable)
+        }),
+        ("15-gateway-down-didnt-start", {
+            let model = AppModel.preview(.unreachable)
+            model.startPhase = .failed("The gateway program is missing. Build it with swift build in the repository.")
+            return model
+        }),
+        ("16-key-missing", {
+            AppModel.preview(.loggedIn, token: false)
+        }),
+        ("17-chats", {
+            let model = AppModel.preview(.loggedIn)
+            model.tab = .chats
+            return model
+        }),
+        ("18-chats-unsaved", {
+            let model = AppModel.preview(.loggedIn)
+            model.tab = .chats
+            await model.refresh()
+            await model.loadChats()
+            model.setChat("-1002222222222", monitored: true)
+            model.setFolder("5", monitored: true)
+            return model
+        }),
+        ("19-apps", {
+            let model = AppModel.preview(.loggedIn)
+            model.tab = .apps
+            return model
+        }),
+        ("20-apps-empty", {
+            let model = AppModel.preview(.loggedInEmpty)
+            model.tab = .apps
+            return model
+        }),
+        ("21-approve", {
+            let model = AppModel.preview(.loggedIn)
+            model.tab = .apps
+            await model.refresh()
+            await model.loadChats()
+            await model.loadAccess()
+            model.beginApproval(model.requests[0])
+            return model
+        }),
+        ("22-approve-folder", {
+            let model = AppModel.preview(.loggedIn)
+            model.tab = .apps
+            await model.refresh()
+            await model.loadChats()
+            await model.loadAccess()
+            model.beginApproval(model.requests[0])
+            model.approval?.followFolder = true
+            model.approval?.folderId = "3"
+            return model
+        }),
+        ("23-app-detail", {
+            let model = AppModel.preview(.loggedIn)
+            model.tab = .apps
+            await model.refresh()
+            await model.loadChats()
+            await model.loadAccess()
+            model.overlay = .grant(Fixtures.grants[0].id)
+            return model
+        }),
+        ("24-app-detail-paused", {
+            let model = AppModel.preview(.loggedIn)
+            model.tab = .apps
+            await model.refresh()
+            await model.loadChats()
+            await model.loadAccess()
+            model.overlay = .grant(Fixtures.grants[1].id)
+            return model
+        }),
+        ("25-gateway-details", {
+            let model = AppModel.preview(.loggedIn)
+            model.overlay = .details
+            return model
+        }),
+    ]
 
     private static func runFake(into directory: URL) async throws {
-        let cases: [(String, () -> AppModel)] = [
-            ("01-setup-first-run", { AppModel.preview(.unreachable, credentials: false, token: false) }),
-            ("02-setup-gateway-down", { AppModel.preview(.unreachable) }),
-            ("03-token-missing", { AppModel.preview(.loggedIn, token: false) }),
-            ("04-login-qr", { AppModel.preview(.waitingForQR) }),
-            ("05-login-code", { AppModel.preview(.waitingForCode) }),
-            ("06-login-password", { AppModel.preview(.waitingForPassword) }),
-            ("07-status", { AppModel.preview(.loggedIn) }),
-            ("08-chats", { let m = AppModel.preview(.loggedIn); m.tab = .chats; return m }),
-            ("09-chats-empty", { let m = AppModel.preview(.loggedInEmpty); m.tab = .chats; return m }),
-            ("10-access", { let m = AppModel.preview(.loggedIn); m.tab = .access; return m }),
-            ("11-approve", { let m = AppModel.preview(.loggedIn); m.tab = .access; m.approving = Fixtures.requests[0]; return m }),
-        ]
-        // `--only <prefix>` renders a subset, e.g. `--only 11`.
+        // `--only <prefix>` renders a subset, e.g. `--only 21`.
         let only: String? = {
             let arguments = CommandLine.arguments
             guard let index = arguments.firstIndex(of: "--only"), index + 1 < arguments.count else { return nil }
             return arguments[index + 1]
         }()
         for (name, make) in cases where only == nil || name.hasPrefix(only!) {
-            let model = make()
-            await model.refresh()
-            try await capture(model, to: directory.appending(path: "\(name).png"))
-            for appearance in [NSAppearance.Name.darkAqua] {
-                try await capture(model, to: directory.appending(path: "\(name)-dark.png"), appearance: appearance)
+            for (suffix, appearance) in [("", NSAppearance.Name.aqua), ("-dark", NSAppearance.Name.darkAqua)] {
+                let model = await make()
+                await model.refresh()
+                try await capture(model, to: directory.appending(path: "\(name)\(suffix).png"), appearance: appearance)
             }
         }
     }
@@ -67,24 +187,25 @@ enum SnapshotRunner {
     // MARK: Live: scripted flow through HTTPAPIClient
 
     private static func runLive(into directory: URL) async throws {
-        let model = AppModel.live()
+        let model = AppModel.live(persistOnboarding: false)
         var step = 0
         func shot(_ name: String) async throws {
             step += 1
             try await capture(model, to: directory.appending(path: String(format: "live-%02d-%@.png", step, name)))
         }
         await model.refresh()
-        print("live: screen \(model.screen), reachable \(model.reachable), auth \(model.authState.rawValue), token \(model.token != nil)")
+        print("live: screen \(model.screen), reachable \(model.reachable), auth \(model.authState.rawValue), token \(model.token != nil), headline \(model.headline.phrase)")
         try await shot("initial")
         guard model.screen == .login || model.screen == .main else {
-            print("live: not at login/main, stopping (lastError: \(model.lastError ?? "-"), tokenError: \(model.tokenError ?? "-"))")
+            print("live: not at sign-in or main, stopping (lastError: \(model.lastError ?? "-"), tokenError: \(model.tokenError ?? "-"))")
             return
         }
         if model.screen == .login {
             await model.requestQR()
             await model.refreshAuth()
-            print("live: qr link \(model.auth?.qrLink ?? "none")")
+            print("live: qr link \(model.auth?.qrLink ?? "none") error \(model.loginError ?? "-")")
             try await shot("qr")
+            model.loginMode = .phone
             await model.submitPhone("+15551234567")
             print("live: after phone → \(model.authState.rawValue) hint \(model.auth?.phoneHint ?? "-") error \(model.loginError ?? "-")")
             try await shot("code")
@@ -99,31 +220,37 @@ enum SnapshotRunner {
             await model.refresh()
             print("live: after password → \(model.authState.rawValue), screen \(model.screen)")
         }
-        try await shot("status")
+        model.tab = .overview
+        try await shot("overview")
         model.tab = .chats
         await model.loadChats()
         print("live: \(model.chats.count) chats, \(model.folders.count) folders, monitored \(model.monitoredCount)")
         try await shot("chats")
-        let saved = await model.saveMonitored(chatIds: ["-1001234567890", "-1001987654321"], folderIds: ["3"])
-        print("live: save monitored → \(saved) effective \(model.monitored?.effectiveChatIds ?? []) error \(model.chatsError ?? "-")")
-        model.tab = .access
+        if let first = model.chats.first {
+            model.setChat(first.id, monitored: true)
+            let saved = await model.saveDraft()
+            print("live: save monitored → \(saved) effective \(model.monitored?.effectiveChatIds ?? []) error \(model.chatsError ?? "-")")
+        }
+        model.tab = .apps
         await model.loadAccess()
         print("live: \(model.requests.count) requests, \(model.grants.count) grants")
-        try await shot("access")
+        try await shot("apps")
         if let request = model.requests.first {
-            model.approving = request
+            model.beginApproval(request)
             try await shot("approve")
-            let ok = await model.approve(request, selection: .chats(["-1001234567890"]), scopes: ["messages:read", "chats:read"], alsoMonitor: [])
+            let ok = await model.approve()
             print("live: approve → \(ok) error \(model.accessError ?? "-") grants \(model.grants.count)")
             try await shot("after-approve")
             if let grant = model.grants.first {
+                model.overlay = .grant(grant.id)
+                try await shot("app-detail")
                 await model.revoke(grant)
                 print("live: revoke → grants \(model.grants.count) error \(model.accessError ?? "-")")
             }
         }
         await model.logout()
-        print("live: logout → \(model.authState.rawValue) screen \(model.screen)")
-        try await shot("after-logout")
+        print("live: sign out → \(model.authState.rawValue) screen \(model.screen)")
+        try await shot("after-sign-out")
     }
 
     // MARK: Rendering
@@ -151,4 +278,5 @@ enum SnapshotRunner {
 
     enum SnapshotError: Error { case noBitmap, noPNG }
 }
+
 #endif

@@ -1,183 +1,246 @@
 import SwiftUI
 
-/// The chat picker: every chat in the account and every folder, with checkboxes for what
-/// the gateway monitors. Changes are local until Save (`PUT /v1/admin/monitored-chats`
-/// replaces the whole set, so partial saves make no sense).
+/// The chat picker. Three sections — what is monitored now, folders, everything else — each
+/// a card of rows. Ticks are a draft until Save, because the gateway replaces the whole
+/// monitored set at once.
 struct ChatsView: View {
     @Environment(AppModel.self) private var model
     @State private var search = ""
-    @State private var selectedChats: Set<String> = []
-    @State private var selectedFolders: Set<String> = []
-    @State private var loadedFrom: MonitoredChats?
-    @State private var saving = false
+
+    /// A row in any section: a folder or a chat.
+    enum Entry: Identifiable {
+        case folder(Folder)
+        case chat(Chat)
+
+        var id: String {
+            switch self {
+            case .folder(let folder): "folder-\(folder.id)"
+            case .chat(let chat): "chat-\(chat.id)"
+            }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Search chats", text: $search)
-                    .textFieldStyle(.plain)
-                if !search.isEmpty {
-                    Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(6)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-            .padding(.horizontal, 12)
-            .padding(.bottom, 6)
+            searchField
+                .padding(.horizontal, PanelSize.margin)
+                .padding(.bottom, 8)
 
             if model.chatsLoading, model.chats.isEmpty {
-                ProgressView("Loading chats…")
+                ProgressView().controlSize(.small)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = model.chatsError, model.chats.isEmpty {
-                VStack(spacing: 8) {
-                    ErrorLine(message: error)
-                    Button("Retry") { Task { await load() } }
+                VStack(spacing: 10) {
+                    Card(tone: .failed) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Couldn't load your chats")
+                                .font(TypeScale.rowTitle)
+                            Text(error)
+                                .font(TypeScale.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Button("Try again") { Task { await model.loadChats() } }
+                        .buttonStyle(.primary)
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(PanelSize.margin)
+                .frame(maxHeight: .infinity, alignment: .top)
             } else {
                 list
             }
-
-            Divider()
             footer
         }
-        .task { await load() }
+        .task { await model.loadChats() }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            TextField("", text: $search, prompt: Text("Search chats"))
+                .textFieldStyle(.plain)
+                .font(TypeScale.body)
+            if !search.isEmpty {
+                Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var list: some View {
-        List {
-            if !filteredFolders.isEmpty {
-                Section("Folders") {
-                    ForEach(filteredFolders) { folder in
-                        Toggle(isOn: binding(for: folder.id, in: $selectedFolders)) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "folder")
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 16)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(folder.title)
-                                    Text("\(folder.chatIds.count) chats · follows the folder as you edit it on your phone")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: PanelSize.gap) {
+                if !model.onboardingDone, search.isEmpty {
+                    Card {
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                StepIndicator(step: 3)
+                                Text("Pick the chats to monitor. Nothing else leaves the gateway.")
+                                    .font(TypeScale.body)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
+                            Spacer(minLength: 4)
+                            Button { model.onboardingDone = true } label: {
+                                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Dismiss")
                         }
-                        .toggleStyle(.checkbox)
                     }
                 }
-            }
-            Section("Chats") {
-                if filteredChats.isEmpty {
-                    Text(search.isEmpty ? "No chats in this account." : "No chats match \"\(search)\".")
+                let monitored = monitoredEntries
+                if !monitored.isEmpty {
+                    LabeledSection("Monitored") { EntryCard(entries: monitored) }
+                }
+                let folders = otherFolders
+                if !folders.isEmpty {
+                    LabeledSection("Folders", footer: "A folder follows what you put in it on your phone.") {
+                        EntryCard(entries: folders)
+                    }
+                }
+                let chats = otherChats
+                if !chats.isEmpty {
+                    LabeledSection("All chats") { EntryCard(entries: chats) }
+                }
+                if monitored.isEmpty, folders.isEmpty, chats.isEmpty {
+                    Text(search.isEmpty ? "This account has no chats." : "No chats match “\(search)”.")
+                        .font(TypeScale.body)
                         .foregroundStyle(.secondary)
-                }
-                ForEach(filteredChats) { chat in
-                    Toggle(isOn: binding(for: chat.id, in: $selectedChats)) {
-                        ChatLabel(chat: chat)
-                    }
-                    .toggleStyle(.checkbox)
-                    .disabled(coveredByFolder(chat.id) && !selectedChats.contains(chat.id))
-                    .help(coveredByFolder(chat.id) ? "Monitored through a folder" : "")
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 24)
                 }
             }
+            .padding(.horizontal, PanelSize.margin)
+            .padding(.bottom, PanelSize.margin)
         }
-        .listStyle(.inset)
-        .scrollContentBackground(.hidden)
     }
 
     private var footer: some View {
-        HStack {
-            Text("\(effectiveCount) monitored")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+        FooterBar {
             if let error = model.chatsError, !model.chats.isEmpty {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
-                    .help(error)
+                Text(error)
+                    .font(TypeScale.secondary)
+                    .foregroundStyle(Tone.failed.color)
+                    .lineLimit(2)
+            } else if model.isDraftDirty {
+                Text(Wording.count(model.draftChangeCount, "change"))
+                    .font(TypeScale.body)
+            } else {
+                Text("\(model.draftEffectiveCount.formatted()) monitored")
+                    .font(TypeScale.body)
+                    .foregroundStyle(.secondary)
             }
             Spacer()
-            if isDirty {
-                Button("Revert") { resetSelection() }
-                    .disabled(saving)
-                Button(saving ? "Saving…" : "Save") { Task { await save() } }
+            if model.isDraftDirty {
+                Button("Revert") { model.revertDraft() }
+                    .disabled(model.chatsSaving)
+                Button(model.chatsSaving ? "Saving…" : "Save") { Task { await model.saveDraft() } }
+                    .buttonStyle(.primary)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(saving)
-            } else {
-                Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.borderless)
-                    .help("Reload from the gateway")
-                    .disabled(model.chatsLoading)
+                    .disabled(model.chatsSaving)
+            }
+        }
+    }
+
+    // MARK: Sections
+    // Membership follows what is saved, so rows do not jump between sections while ticking.
+
+    private var query: String { search.trimmingCharacters(in: .whitespaces).lowercased() }
+
+    private func matches(_ chat: Chat) -> Bool {
+        query.isEmpty || chat.title.lowercased().contains(query) || (chat.username?.lowercased().contains(query) ?? false)
+    }
+
+    private func matches(_ folder: Folder) -> Bool {
+        query.isEmpty || folder.title.lowercased().contains(query)
+    }
+
+    private var savedFolderIds: Set<String> { Set(model.monitored?.folderIds ?? []) }
+    private var savedEffective: Set<String> { Set(model.monitored?.effectiveChatIds ?? []) }
+
+    private var monitoredEntries: [Entry] {
+        model.folders.filter { savedFolderIds.contains($0.id) && matches($0) }.map(Entry.folder)
+            + model.chats.filter { savedEffective.contains($0.id) && matches($0) }.map(Entry.chat)
+    }
+
+    private var otherFolders: [Entry] {
+        model.folders.filter { !savedFolderIds.contains($0.id) && matches($0) }.map(Entry.folder)
+    }
+
+    private var otherChats: [Entry] {
+        model.chats.filter { !savedEffective.contains($0.id) && matches($0) }.map(Entry.chat)
+    }
+}
+
+/// A card of folder and chat rows, lazily built (an account can have hundreds of chats).
+struct EntryCard: View {
+    var entries: [ChatsView.Entry]
+
+    var body: some View {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                if index > 0 {
+                    // Inset to the text: past the checkbox and the icon.
+                    Divider().padding(.leading, 62)
+                }
+                Group {
+                    switch entry {
+                    case .folder(let folder): FolderRow(folder: folder)
+                    case .chat(let chat): ChatRow(chat: chat)
+                    }
+                }
+                .padding(.vertical, 7)
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 2)
+        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
     }
+}
 
-    // MARK: Selection
+struct ChatRow: View {
+    @Environment(AppModel.self) private var model
+    var chat: Chat
 
-    private var filteredChats: [Chat] {
-        let query = search.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !query.isEmpty else { return model.chats }
-        return model.chats.filter {
-            $0.title.lowercased().contains(query) || ($0.username?.lowercased().contains(query) ?? false) || $0.id.contains(query)
+    var body: some View {
+        let covering = model.coveringFolder(for: chat.id)
+        let locked = covering != nil && !model.draft.chatIds.contains(chat.id)
+        HStack(spacing: 10) {
+            RowCheckbox(
+                isOn: Binding(get: { model.isChatTicked(chat.id) }, set: { model.setChat(chat.id, monitored: $0) }),
+                locked: locked)
+            IconTile(symbol: chat.type.symbolName)
+            TitleAndDetail(title: chat.title, detail: locked ? "via \(covering?.title ?? "a") folder" : Wording.chatSubtitle(chat))
+            Spacer(minLength: 0)
         }
-    }
-
-    private var filteredFolders: [Folder] {
-        let query = search.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !query.isEmpty else { return model.folders }
-        return model.folders.filter { $0.title.lowercased().contains(query) }
-    }
-
-    private func coveredByFolder(_ chatId: String) -> Bool {
-        model.folders.contains { selectedFolders.contains($0.id) && $0.chatIds.contains(chatId) }
-    }
-
-    /// What the effective set would be after saving the current selection.
-    private var effectiveCount: Int {
-        var ids = selectedChats
-        for folder in model.folders where selectedFolders.contains(folder.id) {
-            ids.formUnion(folder.chatIds)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !locked { model.setChat(chat.id, monitored: !model.draft.chatIds.contains(chat.id)) }
         }
-        return ids.count
+        .help(locked ? "Monitored because it is in the \(covering?.title ?? "") folder" : "")
     }
+}
 
-    private var isDirty: Bool {
-        guard let loadedFrom else { return false }
-        return selectedChats != Set(loadedFrom.chatIds) || selectedFolders != Set(loadedFrom.folderIds)
-    }
+struct FolderRow: View {
+    @Environment(AppModel.self) private var model
+    var folder: Folder
 
-    private func binding(for id: String, in set: Binding<Set<String>>) -> Binding<Bool> {
-        Binding(
-            get: { set.wrappedValue.contains(id) },
-            set: { on in
-                if on { set.wrappedValue.insert(id) } else { set.wrappedValue.remove(id) }
-            })
-    }
-
-    private func load() async {
-        await model.loadChats()
-        if !isDirty || loadedFrom == nil { resetSelection() }
-    }
-
-    private func resetSelection() {
-        loadedFrom = model.monitored
-        selectedChats = Set(model.monitored?.chatIds ?? [])
-        selectedFolders = Set(model.monitored?.folderIds ?? [])
-    }
-
-    private func save() async {
-        saving = true
-        defer { saving = false }
-        if await model.saveMonitored(chatIds: selectedChats.sorted(), folderIds: selectedFolders.sorted()) {
-            resetSelection()
+    var body: some View {
+        HStack(spacing: 10) {
+            RowCheckbox(isOn: Binding(get: { model.draft.folderIds.contains(folder.id) }, set: { model.setFolder(folder.id, monitored: $0) }))
+            IconTile(symbol: "folder")
+            TitleAndDetail(title: folder.title, detail: "Folder · \(Wording.count(folder.chatIds.count, "chat"))")
+            Spacer(minLength: 0)
         }
+        .contentShape(Rectangle())
+        .onTapGesture { model.setFolder(folder.id, monitored: !model.draft.folderIds.contains(folder.id)) }
     }
 }
 
@@ -187,8 +250,8 @@ struct ChatsView: View {
     return RootView().environment(model)
 }
 
-#Preview("Chats, nothing monitored") {
-    let model = AppModel.preview(.loggedInEmpty)
+#Preview("Chats, first run") {
+    let model = AppModel.preview(.loggedInEmpty, onboarded: false)
     model.tab = .chats
     return RootView().environment(model)
 }

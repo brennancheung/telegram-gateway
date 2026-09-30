@@ -21,6 +21,10 @@ actor FakeAPIClient: APIClient {
         case loggedIn
         /// Logged in, nothing monitored, no requests, no grants.
         case loggedInEmpty
+        /// Logged in, monitoring, apps connected and healthy, nothing waiting for the owner.
+        case loggedInQuiet
+        /// Logged in, but Telegram's connection is down for the moment.
+        case reconnecting
     }
 
     private var scenario: Scenario
@@ -49,15 +53,19 @@ actor FakeAPIClient: APIClient {
         case .waitingForQR: authState = .waitQRConfirmation
         case .waitingForCode: authState = .waitCode; phoneHint = "+1 555 ••• 4567"
         case .waitingForPassword: authState = .waitPassword
-        case .loggedIn, .loggedInEmpty: authState = .ready
+        case .loggedIn, .loggedInEmpty, .loggedInQuiet, .reconnecting: authState = .ready
         }
         chats = Fixtures.chats
         folders = Fixtures.folders
         switch scenario {
-        case .loggedIn:
-            monitored = MonitoredChats(chatIds: ["-1001234567890"], folderIds: ["3"], effectiveChatIds: [])
+        case .loggedIn, .reconnecting:
+            monitored = MonitoredChats(chatIds: ["-1001111111111"], folderIds: ["3"], effectiveChatIds: [])
             requests = Fixtures.requests
             grantsStore = Fixtures.grants
+        case .loggedInQuiet:
+            monitored = MonitoredChats(chatIds: ["-1001111111111"], folderIds: ["3"], effectiveChatIds: [])
+            requests = []
+            grantsStore = Fixtures.quietGrants
         default:
             monitored = MonitoredChats(chatIds: [], folderIds: [], effectiveChatIds: [])
             requests = []
@@ -101,7 +109,8 @@ actor FakeAPIClient: APIClient {
     }
 
     private var tdlib: TDLibState {
-        TDLibState(authState: authState, connectionState: authState == .ready ? .ready : .connecting)
+        let connected: Bool = if case .reconnecting = scenario { false } else { authState == .ready }
+        return TDLibState(authState: authState, connectionState: connected ? .ready : .connecting)
     }
 
     // MARK: Login
@@ -375,10 +384,11 @@ enum Fixtures {
             requestId: "req_7Hs2kQm9vL4pX1nB8cR3tY6wZ0aD5eF2gJ4iK7lM9oP", status: .pending,
             name: "Community Analytics", description: "Classifies messages in product channels and counts topics per day.",
             scopes: ["messages:read", "history:read", "chats:read"],
-            requestedChats: .list(["-1001234567890", "-1001111111111"]),
+            requestedChats: .list(["-1001234567890", "-1001987654321", "-1003333333333"]),
             requestedChatsStatus: [
                 RequestedChatStatus(chatId: "-1001234567890", title: "Acme Product Updates", isMonitored: true),
-                RequestedChatStatus(chatId: "-1001111111111", title: "Industry News", isMonitored: false),
+                RequestedChatStatus(chatId: "-1001987654321", title: "Acme Support", isMonitored: true),
+                RequestedChatStatus(chatId: "-1003333333333", title: "Volgenic Announcements", isMonitored: false),
             ],
             webhookUrl: "https://analytics.example.com/tgw/events",
             createdAt: Date().addingTimeInterval(-120), expiresAt: Date().addingTimeInterval(13 * 60)),
@@ -399,6 +409,17 @@ enum Fixtures {
             effectiveChatIds: ["-1001234567890"],
             webhook: WebhookStatus(url: "https://archive.example.com/hooks/tgw", state: .paused, cursorSeq: 4610, pendingEvents: 202, lastDeliveryAt: Date().addingTimeInterval(-86400 * 2), lastError: "connection refused", pausedAt: Date().addingTimeInterval(-3600)),
             createdAt: Date().addingTimeInterval(-86400 * 10), lastSeenAt: Date().addingTimeInterval(-86400 * 2), revokedAt: nil),
+    ]
+
+    /// Two healthy apps: one delivering by webhook, one connected over WebSocket.
+    static let quietGrants: [Grant] = [
+        grants[0],
+        Grant(
+            id: "grant_Mn4oP5qR6sT7uV8w", app: AppInfo(name: "Mention Alerts", description: "Pings the team when the product is mentioned."),
+            scopes: ["messages:read"],
+            chats: GrantChats(mode: "list", chatIds: ["-1001111111111"], folderId: nil, folderTitle: nil),
+            effectiveChatIds: ["-1001111111111"], webhook: nil,
+            createdAt: Date().addingTimeInterval(-86400 * 6), lastSeenAt: Date().addingTimeInterval(-300), revokedAt: nil),
     ]
 
     static let deliveries: [Delivery] = [

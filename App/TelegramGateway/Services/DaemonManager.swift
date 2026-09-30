@@ -54,8 +54,10 @@ enum DaemonLocator {
     }
 }
 
-/// Registers the daemon with launchd through `SMAppService` and, as a development fallback,
-/// runs it as a child process of the app ("Run in foreground").
+/// Starts and stops the gateway. The normal route registers it with launchd through
+/// `SMAppService` so it starts at login and outlives the app; the fallback runs it as a
+/// child process of the app. Error strings are shown to the owner, so they say "gateway"
+/// and never name launchd.
 @MainActor
 @Observable
 final class DaemonManager {
@@ -64,7 +66,7 @@ final class DaemonManager {
     static let agentLabel = "com.brennancheung.telegram-gateway.daemon"
     static let agentPlistName = agentLabel + ".plist"
 
-    /// What launchd knows about the agent, in the app's own words.
+    /// Whether macOS starts the gateway at login (what `SMAppService` reports).
     enum AgentState: Equatable, Sendable {
         case notRegistered
         case enabled
@@ -72,13 +74,14 @@ final class DaemonManager {
         case notFound
         case unavailable(String)
 
-        var label: String {
+        /// The value shown next to "Starts at login" in Gateway details.
+        var startsAtLogin: String {
             switch self {
-            case .notRegistered: "Not registered with launchd"
-            case .enabled: "Registered with launchd (starts at login)"
-            case .requiresApproval: "Waiting for approval in System Settings → Login Items"
-            case .notFound: "Registered, but launchd cannot find the agent (rebuild the app)"
-            case .unavailable(let reason): "launchd status unavailable: \(reason)"
+            case .notRegistered: "No"
+            case .enabled: "Yes"
+            case .requiresApproval: "Waiting for your approval"
+            case .notFound: "Needs setting up again"
+            case .unavailable: "Unknown"
             }
         }
     }
@@ -93,19 +96,20 @@ final class DaemonManager {
     private(set) var foreground: ForegroundState = .stopped
     private(set) var lastError: String?
     private(set) var resolution = DaemonLocator.Resolution(candidates: [])
-    /// The child process when running in foreground. Not launchd's business.
+    /// The child process when the gateway runs inside the app.
     private var child: Process?
     private let previewMode: Bool
 
-    init(previewMode: Bool = false) {
+    init(previewMode: Bool = false, agentState: AgentState = .notRegistered) {
         self.previewMode = previewMode
-        if previewMode { agentState = .notRegistered }
+        self.agentState = agentState
     }
 
     var daemonURL: URL? { resolution.url }
     var isForegroundRunning: Bool { if case .running = foreground { return true }; return false }
 
-    /// Runs `daemonPath` before every action and lets the Setup screen show what was found.
+    func clearError() { lastError = nil }
+
     func locate(config: GatewayConfig) {
         resolution = DaemonLocator.resolve(config: config)
     }
@@ -117,54 +121,54 @@ final class DaemonManager {
         case .enabled: agentState = .enabled
         case .requiresApproval: agentState = .requiresApproval
         case .notFound: agentState = .notFound
-        @unknown default: agentState = .unavailable("unknown SMAppService status")
+        @unknown default: agentState = .unavailable("unknown status")
         }
     }
 
-    /// "Start gateway": records the daemon path for the launcher script, then registers the
-    /// LaunchAgent. launchd starts it at once (RunAtLoad) and at every login.
+    /// Records the gateway's program path for the launcher script, then registers it to
+    /// start now and at every login.
     func register(config: GatewayConfig) {
         lastError = nil
+        // Previews and tests never touch config.json or launchd.
+        guard !previewMode else { agentState = .enabled; return }
         locate(config: config)
         guard let url = daemonURL else {
-            lastError = "No GatewayDaemon binary found. Run `swift build` in the repository first."
+            lastError = "The gateway program is missing. Build it with swift build in the repository."
             return
         }
         do {
             try GatewayConfig.merge(["daemon_path": url.path])
         } catch {
-            lastError = "Could not write config.json: \(error.localizedDescription)"
+            lastError = "Couldn't save the settings: \(error.localizedDescription)"
             return
         }
-        guard !previewMode else { agentState = .enabled; return }
         do {
             try SMAppService.agent(plistName: Self.agentPlistName).register()
         } catch {
-            lastError = "launchd registration failed: \(error.localizedDescription)"
+            lastError = "macOS didn't accept the gateway as a login item: \(error.localizedDescription)"
         }
         refreshAgentState()
     }
 
-    /// Removes the LaunchAgent; launchd stops the daemon.
+    /// Stops the gateway and stops starting it at login.
     func unregister() {
         lastError = nil
         guard !previewMode else { agentState = .notRegistered; return }
         do {
             try SMAppService.agent(plistName: Self.agentPlistName).unregister()
         } catch {
-            lastError = "launchd unregister failed: \(error.localizedDescription)"
+            lastError = "Couldn't remove the login item: \(error.localizedDescription)"
         }
         refreshAgentState()
     }
 
-    /// System Settings → General → Login Items, where the owner approves the agent.
+    /// System Settings → General → Login Items, where the owner allows the gateway.
     func openLoginItemsSettings() {
         guard !previewMode else { return }
         SMAppService.openSystemSettingsLoginItems()
     }
 
-    /// "Restart gateway": `launchctl kickstart -k` for the launchd agent, or stop and start
-    /// the foreground child.
+    /// `launchctl kickstart -k` for the registered gateway, or stop and start the child.
     func restart(config: GatewayConfig) {
         lastError = nil
         if isForegroundRunning {
@@ -185,30 +189,30 @@ final class DaemonManager {
             process.waitUntilExit()
             if process.terminationStatus != 0 {
                 let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                lastError = "launchctl kickstart failed (\(process.terminationStatus)): \(output.trimmingCharacters(in: .whitespacesAndNewlines))"
+                lastError = "Couldn't restart the gateway: \(output.trimmingCharacters(in: .whitespacesAndNewlines))"
             }
         } catch {
-            lastError = "Could not run launchctl: \(error.localizedDescription)"
+            lastError = "Couldn't restart the gateway: \(error.localizedDescription)"
         }
     }
 
-    /// Development fallback: the daemon as a child of the app. It dies with the app, so this
-    /// never satisfies goal #1 ("closing the menu bar app does not stop it").
+    /// The gateway as a child of the app. It stops when the app quits, so it is only the
+    /// fallback when the login-item route is unavailable.
     func runInForeground(config: GatewayConfig) {
         lastError = nil
+        guard !previewMode else { foreground = .running(pid: 4242); return }
         locate(config: config)
         guard let url = daemonURL else {
-            lastError = "No GatewayDaemon binary found. Run `swift build` in the repository first."
+            lastError = "The gateway program is missing. Build it with swift build in the repository."
             return
         }
-        guard !previewMode else { foreground = .running(pid: 4242); return }
         stopForeground()
         let process = Process()
         process.executableURL = url
         process.environment = ProcessInfo.processInfo.environment
         do {
             try FileManager.default.createDirectory(at: GatewayConfig.logDirectory, withIntermediateDirectories: true)
-            let logURL = GatewayConfig.logDirectory.appending(path: "daemon-foreground.log")
+            let logURL = Self.foregroundLogURL
             if !FileManager.default.fileExists(atPath: logURL.path) {
                 FileManager.default.createFile(atPath: logURL.path, contents: nil)
             }
@@ -228,7 +232,7 @@ final class DaemonManager {
             child = process
             foreground = .running(pid: process.processIdentifier)
         } catch {
-            lastError = "Could not start the daemon: \(error.localizedDescription)"
+            lastError = "Couldn't start the gateway: \(error.localizedDescription)"
             foreground = .stopped
         }
     }
@@ -241,6 +245,26 @@ final class DaemonManager {
         foreground = .stopped
     }
 
+    // MARK: Logs
+
     static var foregroundLogURL: URL { GatewayConfig.logDirectory.appending(path: "daemon-foreground.log") }
     static var agentLogURL: URL { GatewayConfig.logDirectory.appending(path: "daemon.log") }
+
+    /// The log of whichever way the gateway is (or was last) run.
+    var logURL: URL {
+        switch foreground {
+        case .running, .exited: Self.foregroundLogURL
+        case .stopped: Self.agentLogURL
+        }
+    }
+
+    /// The last non-empty line of the log, for the one-line reason when a start fails.
+    func lastLogLine() -> String? {
+        guard !previewMode, let handle = try? FileHandle(forReadingFrom: logURL) else { return nil }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > 4096 ? size - 4096 : 0)
+        guard let data = try? handle.readToEnd(), let text = String(data: data, encoding: .utf8) else { return nil }
+        return text.split(separator: "\n").last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map(String.init)
+    }
 }
