@@ -1,240 +1,312 @@
 # Grants: the access model
 
-This document explains, in plain words, who can see what through the gateway. The endpoints
-are in [api.md](api.md); the event format in [events.md](events.md).
+The gateway is signed in to Telegram as a real person's own account, so it is in a position
+to see everything that person sees. This document explains how little of that an app
+actually gets, who controls it, and how access ends. Read it before you run an app against
+your gateway, or to understand what your app will and will not be given.
+
+Three parties appear throughout:
+
+- **The user** is the person who runs the gateway. The Telegram account is theirs, and every
+  choice about access is theirs.
+- An **app** is a program that reads Telegram messages through the gateway.
+- "You" are the developer of an app.
+
+The endpoints behind everything described here are in [api.md](api.md). The format of what
+an app receives is in [events.md](events.md).
 
 ## Contents
 
-- [Two sets: monitored and granted](#two-sets-monitored-and-granted)
+- [What an app can and cannot see](#what-an-app-can-and-cannot-see)
 - [Scopes](#scopes)
 - [Folder-based grants](#folder-based-grants)
-- [Requesting access and what the owner sees](#requesting-access-and-what-the-owner-sees)
+- [What the user sees when approving](#what-the-user-sees-when-approving)
 - [Tokens](#tokens)
-- [Revocation](#revocation)
-- [Token storage for apps](#token-storage-for-apps)
-- [Privacy principles](#privacy-principles)
+- [What revoking does](#what-revoking-does)
+- [Storing the token](#storing-the-token)
+- [What the gateway guarantees](#what-the-gateway-guarantees)
+- [Not supported](#not-supported)
 
 ---
 
-## Two sets: monitored and granted
+## What an app can and cannot see
 
-The gateway is logged in as the owner's own Telegram user, so it *could* see everything that
-user sees: every private conversation, every group, every channel. It deliberately does not
-store or forward most of it. Two sets decide what an application receives:
+Two sets of chats determine what an app receives. (A **chat** is any Telegram conversation: a
+channel, a group, or a private conversation.)
 
-**Monitored chats** — the chats the gateway watches at all. The owner chooses them in the menu
-bar app (or with `tgw`). Only messages in monitored chats are written to the gateway's event
-log; messages in any other chat are seen by TDLib in memory and discarded. This set is
-global: it does not belong to any application.
+**Monitored chats** are the chats the gateway watches at all. The user picks them in the
+gateway's menu bar app. Only messages in monitored chats are written to the gateway's event
+log. Messages in every other chat pass through the gateway's Telegram library in memory and
+are discarded. The set is global: it does not belong to any app.
 
-**Granted chats** — per application, the subset of chats that application may read. A
-**grant** is the record of one application's access: its name, its scopes, its chats, its
-token. The owner creates a grant by approving an access request and can narrow it to fewer
-chats and fewer scopes than the application asked for.
+**Granted chats** are, for one app, the chats that app may read. A **grant** is the record of
+one app's access: its name, its scopes, its chats and its token. The user creates a grant by
+approving the app's access request.
 
-The rule that ties them together:
+One rule ties the two together:
 
-> **A grant never exceeds the monitored set.** What an application can see right now is
-> `granted chats ∩ monitored chats`, computed whenever the application asks.
+> **A grant never exceeds the monitored set.** What an app can see at any moment is
+> `granted chats ∩ monitored chats`, computed each time the app asks.
 
-The API calls that intersection `effective_chat_ids` (in the grant object returned by
-`GET /v1/me`). Consequences:
+The API calls that intersection `effective_chat_ids`. It is in the grant object returned by
+`GET /v1/me`.
 
-- If the owner stops monitoring a chat, every grant that included it loses it at once, with
-  a `monitoring.stopped` event to the applications that had it. The grant still lists the
-  chat, so if the owner monitors it again, access resumes without a new approval.
-- Approving a request for a chat that is not monitored fails (`400 chat_not_monitored`). The
-  menu bar app handles this by offering to monitor the chat as part of the approval, so the
-  owner experiences one decision, not two.
-- An application cannot learn that an unmonitored or ungranted chat exists: asking about it
-  returns the same `403 chat_not_granted` as asking about a chat id that was never real.
+![Nested sets: of every chat the account can see, the user monitors some. Each app is granted
+some chats, and sees only the part of its grant that is also monitored. Chats outside the
+monitored set are never stored or delivered.](images/grants.svg)
 
-```
- all chats the owner's account can see
- ┌───────────────────────────────────────────────┐
- │  monitored (owner's choice, global)           │
- │  ┌─────────────────────────┐                  │
- │  │ granted to app A        │                  │
- │  │ ┌──────────┐            │  granted to app B│
- │  │ │ effective│            │  ┌────────────┐  │
- │  │ │ for A    │            │  │ effective  │  │
- │  │ └──────────┘            │  │ for B      │  │
- │  └─────────────────────────┘  └────────────┘  │
- └───────────────────────────────────────────────┘
-   private chats, unmonitored groups: never stored, never delivered
-```
+| An app can | An app cannot |
+|---|---|
+| Read messages in chats that are both granted to it and monitored, if it holds `messages:read`. This includes messages the user sends in those chats. | Read any other chat: private conversations, unmonitored groups and channels, or chats granted to a different app. |
+| See who sent each message: display name, username and numeric id. | See the user's phone number, contacts, read state, or anything about the account beyond which messages it sent. |
+| Read the earlier timeline of a granted chat, back before the gateway monitored it, if it holds `history:read`. | Read the history of any chat outside its grant. |
+| Download photos and files from messages in granted chats, if it holds `media:read`. | Download a file that belongs to a chat outside its grant, even with the file's id. |
+| Learn the titles, usernames and member counts of its granted chats, if it holds `chats:read`. | List the user's chats, or find out whether a chat it was not granted exists. |
+| Ask for access again, or for more. | Approve itself, widen its own grant, or see other apps' grants. |
+| | Send a message, mark anything as read, or act on the account in any way. |
+
+Three consequences of the rule:
+
+- When the user stops monitoring a chat, every grant that includes it loses it at once, and
+  the apps that had it receive a `monitoring.stopped` event. The grant still lists the chat,
+  so if the user monitors it again, access resumes without a new approval.
+- A request cannot be approved for a chat that is not monitored (`400 chat_not_monitored`).
+  The menu bar app offers to start monitoring the chat as part of approving, so the user
+  makes one decision.
+- An app cannot tell a chat it was not granted from a chat that does not exist. Both answer
+  `403 chat_not_granted`.
 
 ---
 
 ## Scopes
 
-A **scope** names a kind of access. A grant holds one or more. Scopes control *what kind of
-data*; the chat set controls *from where*. Both apply to every request.
+A **scope** names a kind of access. A grant holds one or more. Scopes determine what kind of
+data; the chat set determines from which chats. Both apply to every request.
 
-| Scope | Allows | Endpoints and events |
-|---|---|---|
-| `messages:read` | Receive messages as they arrive, and read the stored backlog. | `message.new`, `message.edited`, `message.deleted` events on `GET /v1/events` and the WebSocket. |
-| `history:read` | Read a chat's timeline from Telegram, back before the gateway monitored it. | `GET /v1/chats/{chat_id}/messages`. |
-| `media:read` | Download files referenced by messages and chat photos. | `GET /v1/media/{media_id}`. Without it, messages still carry media objects (name, size, kind); only the bytes are withheld. |
-| `chats:read` | List the granted chats with title, username, member count; learn when coverage changes. | `GET /v1/chats`, `chat.updated`, `monitoring.started`, `monitoring.stopped`. |
-| `messages:send` | **Reserved. Not implemented in v1.** Requesting it fails with `400 scope_not_available`. | — |
+| Scope | Shown to the user as | Allows | Endpoints and events |
+|---|---|---|---|
+| `messages:read` | New messages | Receiving messages as they arrive, and reading the stored backlog. | `message.new`, `message.edited` and `message.deleted` events, from `GET /v1/events`, the WebSocket and webhooks. |
+| `history:read` | Past messages | Reading a chat's timeline from Telegram, back before the gateway monitored it. | `GET /v1/chats/{chat_id}/messages` |
+| `media:read` | Photos and files | Downloading the files attached to messages, and chat photos. Without it, messages still describe their media (kind, size, file name); only the bytes are withheld. | `GET /v1/media/{media_id}` |
+| `chats:read` | Chat names and details | Listing the granted chats with title, username and member count, and learning when coverage changes. | `GET /v1/chats`, and the `chat.updated`, `monitoring.started` and `monitoring.stopped` events. |
+| `messages:send` | Send messages | Nothing. The name is reserved, and a request that asks for it is refused with `400 scope_not_available`. | |
 
-`GET /v1/me` and the webhook endpoints under `/v1/me/webhook` need no particular scope — any
-valid app token can inspect and manage its own grant.
+`GET /v1/me` and the endpoints under `/v1/me/webhook` need no particular scope: any valid app
+token can inspect its own grant and manage its own webhook.
 
 Typical combinations:
 
-| Application | Scopes |
+| App | Scopes |
 |---|---|
-| Live classifier / alerting | `messages:read`, `chats:read` |
-| Analytics with backfill of past months | `messages:read`, `history:read`, `chats:read` |
-| Archive with attachments | `messages:read`, `history:read`, `media:read`, `chats:read` |
+| Support Triage: alerts on new messages | `messages:read`, `chats:read` |
+| Community Analytics: counts topics, with past months as a baseline | `messages:read`, `history:read`, `chats:read` |
+| Archive: keeps messages with their attachments | `messages:read`, `history:read`, `media:read`, `chats:read` |
 
-Ask for the least you need. The owner sees the scopes when approving, and a request for
-`media:read` from something that only counts hashtags looks wrong.
+Ask for the least you need. The user sees the scopes when approving, and a request for
+"Photos and files" from an app that only counts hashtags looks wrong.
 
 ---
 
 ## Folder-based grants
 
-A Telegram **folder** (Telegram calls them "chat folders"; they appear as tabs at the top of
-the chat list on the phone and desktop) is a named collection of chats the owner maintains in
-their normal Telegram apps: "Work", "Crypto", "Product". The gateway reads the owner's
-folders through TDLib.
+A Telegram **folder** is a named collection of chats that the user maintains in Telegram's
+own apps, where folders appear as tabs above the chat list: "Work", "Product". The gateway
+reads the user's folders from Telegram.
 
-A grant's chats can be either a fixed **list** of chat ids, or a **folder**. With a folder
-grant, the granted set is "whatever is in that folder at the time of the request" — when the
-owner drags a new channel into the "Product" folder on their phone, every application with a
-grant on "Product" gains that channel without another approval round, and when a chat is
-removed from the folder, access ends.
+A grant's chats are either a fixed **list** of chat ids or a **folder**. A folder grant
+covers whatever the folder contains at the moment of each request. When the user adds a
+channel to the "Product" folder on their phone, every app granted "Product" gains that
+channel without another approval. When a chat is removed from the folder, access to it ends.
 
-The monitored set can also follow a folder (`folder_ids` in `PUT /v1/admin/monitored-chats`).
-The usual arrangement is: the owner monitors the "Product" folder, and grants applications
-the "Product" folder. Then "add a channel to the folder on the phone" is the whole workflow
-for extending both monitoring and access. If a folder is granted but not monitored, the rule
-above still applies: the effective set is the folder's chats that are monitored, and the
-menu bar app warns about it at approval time.
+The monitored set can follow a folder too. The usual arrangement is that the user monitors
+the "Product" folder and grants apps the "Product" folder. Adding a channel to the folder on
+the phone then extends both monitoring and access.
 
-An application cannot ask for a folder by name; it asks for chats or `"any"`, and the owner
-chooses to answer with a folder. The application sees which in `GET /v1/me`:
-`"chats": { "mode": "folder", "folder_id": "3", "folder_title": "Product" }`.
+The rule above still holds for folders. A folder grant reaches only those chats of the
+folder that are monitored, and a folder can be granted only if it is monitored
+(`400 folder_not_monitored`).
+
+An app cannot ask for a folder. It asks for specific chats or for `"any"`, and the user may
+choose to answer with a folder. The app sees which it got in `GET /v1/me`:
+
+```json
+"chats": { "mode": "folder", "folder_id": "3", "folder_title": "Product" }
+```
 
 ---
 
-## Requesting access and what the owner sees
+## What the user sees when approving
 
-The application calls `POST /v1/access-requests` with a name, a description, scopes, and
-optionally the chats it would like (see [api.md](api.md#access-requests)). The request is
-**pending** for `15:00`. In the menu bar app the owner sees:
+An app asks with `POST /v1/access-requests`: a name, a one-sentence description, the scopes
+it wants, optionally the chats it would like, and optionally a webhook URL
+([api.md](api.md#access-requests)). The request stays pending for `15:00`.
+
+The request appears in the menu bar app's window under **Apps**, and a dot on the menu bar
+icon signals that it is waiting. The user sees the app's own words, how long the request has
+left before it expires, and three facts:
 
 ```
-Community Analytics wants access
+Community Analytics                                          Wants access
 "Classifies messages in product channels and counts topics per day."
 
-Scopes         messages:read   history:read   chats:read
-Requested      Acme Product Updates          (monitored)
-               Acme Support                  (not monitored — will be monitored)
-Webhook        https://analytics.example.com/tgw/events
+Wants      New messages, past messages, chat names and details
+In         Acme Product Updates
+           Acme Support                          not monitored yet
+Sends to   analytics.example.com
 
-Chats to grant [ list: Acme Product Updates, Acme Support ]  or  [ folder: Product ▾ ]
-Scopes to grant [x] messages:read  [x] history:read  [ ] chats:read
-
-                                        [ Deny ]   [ Approve ]
+                                                 [ Deny ]   [ Review… ]
 ```
 
-The owner may remove scopes and change the chat set freely (narrowing or widening within the
-monitored set), and may switch to a folder. What the owner approves is what the grant holds,
-so the application must read its grant (`grant` in the poll response, later `GET /v1/me`)
-rather than assume its request was honoured as written.
+**Sends to** is the host of the webhook URL: the place outside the Mac where the app will
+receive events. It is absent when the app uses the WebSocket only.
 
-The owner is the only party who can approve. There is no self-approval path, no token
-minted from the CLI without the admin token, and no way for an application to widen its own
-grant. Asking for more means a new access request, which the owner sees as a new card.
+**Review…** opens the sheet where the user sets what the grant holds:
+
+```
+Give Community Analytics access
+
+Chats
+  [x] Acme Product Updates
+  [x] Acme Support        Not monitored yet — approving starts monitoring it
+  Show 6 other monitored chats
+  Follow a folder instead
+
+Can read
+  [x] New messages             Every message as it arrives, with edits and deletions
+  [x] Past messages            Messages from before the app was connected
+  [x] Chat names and details   Titles, usernames and member counts
+
+2 chats · 3 permissions                          [ Cancel ]   [ Approve ]
+```
+
+The user can untick scopes, untick chats, add other monitored chats, or switch the grant to a
+folder. Scopes can only be removed, never added beyond what the app asked for. What the user
+approves is what the grant holds, so read your grant (in the approved poll response, and
+later from `GET /v1/me`) instead of assuming your request was granted as written.
+
+The name and description are supplied by the app, and the gateway does not verify them. They
+are the app's claim about itself; the scopes, the chats and the webhook host are what the
+gateway enforces.
+
+Only the user can approve. No API call lets an app approve itself or widen its grant, and
+approving requires the admin token, which only the menu bar app and the `tgw` command-line
+tool on the user's Mac hold. An app that needs more sends a new access request, which the
+user sees as a new request. The menu bar app is described in [app.md](app.md).
 
 ---
 
 ## Tokens
 
-A token is the string `tgw_` + 43 characters (32 random bytes, base64url). It is the only
-thing an application presents; it identifies the grant and proves possession. The gateway
-keeps a SHA-256 hash of it on the grant; the plain token lives only inside the access request
-for the `10:00` hand-out window after approval and is erased with it, so the token appears
-exactly once to the application: in the approved poll response (for `10:00` after approval,
-then never again).
+A **token** is the string `tgw_` followed by 43 characters (32 random bytes, base64url). It
+is the only thing an app presents. It identifies the grant and proves possession.
 
-There is also one **admin token**, held by the menu bar app and `tgw`, that is not tied to a
-grant and can do everything. Applications never receive it. The daemon writes it to the
-login Keychain, which is why the daemon runs as the owner's user (a LaunchAgent) and not as a
-system daemon.
+The gateway keeps a SHA-256 hash of the token on the grant. The token itself is held only
+inside the access request, for the `10:00` hand-out window after approval, and is erased with
+it. The app therefore has `10:00` to collect the token from the approved poll response;
+after that, nobody can read it back, including the user.
 
-Tokens do not expire. Access ends by revocation.
+There is one **admin token**, held by the menu bar app and `tgw`. It is not tied to a grant
+and can do everything, including approving and revoking. Apps never receive it. The gateway
+keeps it in a file only the user's macOS account can read
+(`~/Library/Application Support/TelegramGateway/secrets.json`, mode 0600), or in the login
+Keychain when configured to ([api.md](api.md#authentication)).
+
+Tokens do not expire. Access ends when the user revokes the grant.
 
 ---
 
-## Revocation
+## What revoking does
 
-The owner revokes a grant in one click in the menu bar app (`DELETE /v1/admin/grants/{id}`
-underneath). Immediately and permanently:
+The user revokes a grant in the menu bar app with **Revoke access…**, behind a confirmation.
+The effects are immediate and permanent:
 
 | Channel | Effect |
 |---|---|
-| HTTP requests | `401 token_revoked` with `details.revoked_at`. |
-| Open WebSockets | Closed with code `4499`. Reconnecting fails at the upgrade with `401`. |
-| Webhook | No further deliveries; pending deliveries and the cursor are dropped. Any delivery already in flight is not cancelled, so one more batch may land. |
+| HTTP requests | `401 token_revoked`, with `details.revoked_at`. |
+| Open WebSockets | Closed with code `4499`. A new connection with the token receives an error frame `token_revoked` and is closed with `4401`. |
+| Webhook | No further deliveries. Pending deliveries and the cursor are dropped. A delivery already in flight is not cancelled, so one more batch may arrive. |
 | Media downloads in progress | Aborted. |
-| The event log | Untouched; the gateway keeps its own record. The application never had a copy of anything it had not already received. |
+| The event log | Untouched. The gateway keeps its own record. |
 
-There is no un-revoke. The application requests access again, the owner approves again, and a
-new grant with a new token is created; a new webhook cursor starts at the head, so a
-re-approved application should pull the gap with `GET /v1/events?since=` from its last
-processed `seq` (if that history is still retained) or with `history:read`.
+Revoking stops the flow; it does not reach into the app. Whatever an app already received,
+it still has. That is the reason to grant narrowly in the first place.
 
-Narrowing a grant is not a v1 operation (revoke and re-approve instead); narrowing
-*monitoring* is, and takes effect on every grant as described above.
+A revoked grant cannot be restored. The app requests access again, the user approves again,
+and a new grant with a new token is created. A new webhook's cursor starts at the head of
+the log, so an app that is approved again reads what it missed with
+`GET /v1/events?since=<its last seq>`, if those events are still retained, or through
+`history:read`.
+
+The user can also reduce access without revoking: stopping the monitoring of a chat removes
+it from every grant at once, as described above.
 
 ---
 
-## Token storage for apps
+## Storing the token
 
-- Store the token the moment the poll returns `approved`; the gateway shows it for `10:00`
-  and then never again. Write it before you do anything else with it.
-- Store it the way you store any secret: a secrets manager, an environment variable set from
-  one, or a file with mode `0600` outside the repository. The token grants read access to
-  the owner's chosen chats; treat a leak as the owner's data leaking.
-- Store the webhook secret alongside it; without it you cannot verify deliveries, and the
-  only way to get a new one is `PUT /v1/me/webhook`, which invalidates the old one.
-- Store your cursor (last processed `seq`) next to them; it is what makes restarts lossless
-  ([integrating.md](integrating.md#connect-and-resume-with-since)).
-- On `401 token_revoked`, stop retrying and surface it to a human: only the owner can restore
+Advice for your app:
+
+- **Store the token the moment the poll returns `approved`.** The gateway hands it out for
+  `10:00` and never again. Write it down before doing anything else with it.
+- **Store it as a secret**: a secrets manager, an environment variable set from one, or a
+  file with mode `0600` outside your repository. The token gives read access to chats the
+  user chose; a leaked token is the user's data leaking.
+- **Store the webhook secret beside it.** Without it you cannot verify deliveries. The only
+  way to get a new one is `PUT /v1/me/webhook`, which invalidates the old one.
+- **Store your cursor** (the `seq` of the last event you processed) with them. It is what
+  makes restarts lossless ([integrating.md](integrating.md#connect-and-resume-with-since)).
+- **On `401 token_revoked`, stop retrying** and tell a person. Only the user can restore
   access.
-- Never log the token. Log `X-TGW-Request-Id` and `error.code`.
-- One token per deployment of an application. Two copies of an app sharing a token share a
-  grant but keep their own WebSocket cursors (the gateway allows 4 connections); a webhook
-  cursor is per grant, so two copies cannot each have their own webhook — request two grants.
+- **Never log the token.** Log `X-TGW-Request-Id` and `error.code` instead.
+- **Use one grant per deployment.** Two copies of an app that share a token share a grant.
+  Each keeps its own WebSocket cursor (the gateway allows 4 connections per token), but a
+  webhook cursor is per grant, so two copies that each need a webhook need two grants.
 
 ---
 
-## Privacy principles
+## What the gateway guarantees
 
-These are commitments of the gateway's design, not configuration:
+These hold by construction. None of them is a setting.
 
-1. **Nothing unmonitored leaves the gateway.** Messages in chats outside the monitored set
-   are never written to disk by the gateway (TDLib keeps its own encrypted cache, which no
-   other process can open) and never appear in any API response, including error messages.
-2. **Every application sees only its grant.** There is no "list all chats" for an app token,
-   no way to probe whether a chat exists, no shared media ids across grants that would let
-   one app fetch another app's files (media access is checked against the grant's chats on
-   every request).
-3. **The gateway never acts as the owner.** It does not send messages, does not mark
-   messages as read, does not open chats in a way Telegram counts as viewing, does not set
-   the account online, does not join or leave chats. The owner's Telegram apps behave exactly
-   as if the gateway did not exist. `messages:send` is reserved precisely so that a future
-   decision to change this is explicit.
-4. **The owner sees who has what.** Every grant, its scopes, its chats, when it last
-   connected, and how many events it received are visible in the menu bar app.
-5. **Approval is a human act.** No automation can create or widen a grant; only the admin
-   token can approve, and only the menu bar app and `tgw` on the owner's machine hold it.
-6. **Revocation is total and immediate.** See above.
-7. **Local by default.** The API listens on `127.0.0.1` only. The only outbound traffic to a
-   consumer is a webhook the owner approved, to a URL the owner saw at approval time, signed
-   so the consumer can verify its origin.
+1. **Nothing unmonitored leaves the gateway.** The gateway never writes messages from
+   unmonitored chats to its own store, and they never appear in an API response or an error
+   message. (Telegram's library keeps its own encrypted cache of the account, which no other
+   process can open.)
+2. **Every app sees only its grant.** An app token cannot list the user's chats or probe
+   whether a chat exists, and media access is checked against the grant's chats on every
+   request, so one app cannot fetch another app's files by id.
+3. **The gateway never acts as the user.** It does not send messages, mark messages as read,
+   open chats in a way Telegram counts as viewing, set the account online, or join or leave
+   chats. The user's Telegram apps behave as if the gateway were not there.
+4. **The user sees who has what.** Every grant is visible in the menu bar app with its
+   scopes, its chats, where it delivers, and when access began.
+5. **Approval is a person's act.** Nothing automated can create or widen a grant.
+6. **Revocation is total and immediate**, as described above.
+7. **Local by default.** The API listens on `127.0.0.1` only. The only data that leaves the
+   Mac is a webhook the user approved, sent to a URL whose host the user saw when approving,
+   and signed so that the receiver can verify where it came from.
+
+Two things the gateway does not guarantee, because it cannot:
+
+- **What an app does with data it has received.** The gateway controls delivery, not use.
+- **Isolation from other software on the Mac.** Any local process can call the two
+  unauthenticated endpoints: `GET /v1/health`, which reveals whether the gateway is running
+  and signed in but no chat data, and `POST /v1/access-requests`, which grants nothing until
+  the user approves. A process running as the user's macOS account that reads the admin
+  token's file holds the user's own authority over the gateway.
+
+---
+
+## Not supported
+
+| Not supported | Instead |
+|---|---|
+| Sending messages, or any other action on the account | The gateway is read-only. `messages:send` is a reserved name. |
+| Changing a grant's scopes or chat list after approval | The user revokes, and the app requests access again. A folder grant follows its folder without this. |
+| Restoring a revoked grant | The app requests access again and receives a new token. |
+| Token expiry or rotation | Tokens are valid until the grant is revoked. |
+| An app asking for a folder by name | The app asks for chats or `"any"`; the user may answer with a folder. |
+| Per-chat scopes | A grant's scopes apply to all of its chats. An app that needs different scopes for different chats uses two grants. |
+| Monitoring secret chats | End-to-end encrypted chats are never monitored, so they can never be granted. |
+
+The limits of the API as a whole are listed in [api.md](api.md#not-supported).

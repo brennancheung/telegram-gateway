@@ -8,12 +8,17 @@ Telegram messages asks the gateway for access; you approve it, limit it to speci
 can revoke it with one click. Approved apps receive each new message as an event over
 WebSocket or webhooks.
 
-```
-                       ┌───────────────────────────────────────────┐
-  Telegram  ⇄  TDLib ⇄ │  gateway (background service on your Mac)  │ ⇄  your apps
-                       │  monitored chats · event log · grants      │    WebSocket · webhooks · HTTP
-                       └───────────────────────────────────────────┘
-                              ▲ menu bar app        ▲ tgw (CLI)
+```mermaid
+flowchart LR
+  TG(("Telegram"))
+  subgraph mac["Your Mac"]
+    GW["<b>Gateway</b><br/>background service<br/>monitored chats · event log · grants"]
+    ADMIN["Menu bar app<br/>tgw command-line tool"]
+  end
+  APPS["<b>Your apps</b>"]
+  TG <-->|"TDLib"| GW
+  ADMIN -->|"sign in, choose chats,<br/>approve apps"| GW
+  GW -->|"WebSocket · webhooks · HTTP"| APPS
 ```
 
 ## Why
@@ -90,7 +95,8 @@ curl -s http://127.0.0.1:41414/v1/access-requests \
        "description": "Counts topics per day in product channels.",
        "scopes": ["messages:read", "chats:read"],
        "requested_chats": "any"}'
-# → {"request_id": "req_…", "poll_url": "/v1/access-requests/req_…", "status": "pending", …}
+# → {"request_id": "req_…", "status": "pending",
+#    "poll_url": "http://127.0.0.1:41414/v1/access-requests/req_…", …}
 
 # 2. Poll until it is approved; the token is handed over once
 curl -s http://127.0.0.1:41414/v1/access-requests/req_…

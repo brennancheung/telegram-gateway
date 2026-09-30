@@ -1,25 +1,30 @@
 # Events
 
-Everything a consumer receives from the gateway — over the WebSocket, the paged
-`GET /v1/events` endpoint, or a webhook — is an **event** in the format defined here. It is
-the gateway's own format. The raw JSON of **TDLib** (Telegram's official client library,
-which the daemon embeds to speak to Telegram) never crosses the API, so a TDLib upgrade never
-breaks a consumer.
+Everything an app receives from the gateway, whether over the WebSocket, from the paged
+`GET /v1/events` endpoint or in a webhook, is an **event** in the format defined here.
 
-How events are fetched is in [api.md](api.md#events); who may see which events is in
+The format is the gateway's own. The gateway speaks to Telegram through **TDLib**, Telegram's
+official client library, but TDLib's JSON never crosses the API, so a TDLib upgrade does not
+change what an app receives.
+
+In this document "you" are the developer of an **app**, a program that consumes the gateway.
+**The user** is the person who runs the gateway and whose Telegram account it is signed in
+to.
+
+How events are fetched is in [api.md](api.md#events). Which events an app may see is in
 [grants.md](grants.md).
 
 ## Contents
 
 - [Envelope](#envelope)
-- [Event types](#event-types) with one full example each
+- [Event types](#event-types), with a full example of each
 - [Chat summary](#chat-summary)
 - [Message object](#message-object)
 - [Sender](#sender)
 - [Entities](#entities)
 - [Forward origin](#forward-origin)
 - [Media object](#media-object)
-- [What is not included](#what-is-not-included)
+- [Not supported](#not-supported)
 - [Versioning](#versioning)
 
 ---
@@ -40,34 +45,36 @@ How events are fetched is in [api.md](api.md#events); who may see which events i
 
 | Field | Type | Meaning |
 |---|---|---|
-| `v` | number | Format version. Always `1` for this document. See [Versioning](#versioning). |
-| `seq` | number | **Sequence number**: the event's position in the gateway's log. Positive, strictly increasing, never reused. An app sees gaps (events for other apps' chats are skipped) but never reordering. This is the consumer's cursor and dedupe key. |
-| `type` | string | One of the [event types](#event-types). Consumers must ignore types they do not know. |
-| `occurred_at` | timestamp | When the thing happened according to Telegram where Telegram says (message date, edit date); otherwise when the gateway learned of it. |
-| `recorded_at` | timestamp | When the gateway appended the event to its log. `recorded_at - occurred_at` is the delivery lag; after the Mac was asleep it can be hours (see "Backfill after gaps" in [design.md](design.md#delivery)). |
-| `chat` | object | The [chat summary](#chat-summary) the event belongs to. Present on every event. |
-| one payload field | object | Named after the type's first segment: `message` for `message.*`, absent for `message.deleted` which uses `message_ids`, `chat` (the full object) for `chat.updated`, `monitoring` for `monitoring.*`. Listed per type below. |
+| `v` | number | Format version. `1` throughout this document. See [Versioning](#versioning). |
+| `seq` | number | **Sequence number**: the event's position in the gateway's log. Positive, strictly increasing, never reused. An app sees gaps, where events for chats outside its grant are skipped, but never a change of order. It is your cursor and your deduplication key. |
+| `type` | string | One of the [event types](#event-types). Ignore types you do not know. |
+| `occurred_at` | timestamp | When the thing happened. Telegram's own time where Telegram gives one (the message date, the edit date); otherwise the time the gateway learned of it. |
+| `recorded_at` | timestamp | When the gateway appended the event to its log. `recorded_at - occurred_at` is the delivery lag. It can be hours after the Mac was asleep or offline, because the gateway fetches what it missed when it reconnects ([architecture.md](architecture.md#delivery-guarantees)). |
+| `chat` | object | The chat the event belongs to, as a [chat summary](#chat-summary). Present on every event. In `chat.updated` it is the full chat object instead. |
+| payload | | One or two further fields that depend on `type`, listed in the table below. |
 
-Timestamps are RFC 3339 UTC (see [api.md](api.md#timestamps)); ids are strings
-(see [api.md](api.md#identifiers-are-strings)).
+Timestamps are RFC 3339 in UTC ([api.md](api.md#timestamps)). Ids are strings
+([api.md](api.md#identifiers-are-strings)).
 
 ---
 
 ## Event types
 
-| Type | Payload | Emitted when | Needs scope |
+| Type | Payload fields | Emitted when | Scope needed |
 |---|---|---|---|
-| `message.new` | `message` | A message arrives in a monitored chat (including the owner's own outgoing messages, `is_outgoing: true`), and for each message found by backfill after a gap. | `messages:read` |
-| `message.edited` | `message` | A message's text, caption or media changed. The full message is sent, not a diff. | `messages:read` |
-| `message.deleted` | `message_ids` | Messages were deleted for everyone (TDLib `is_permanent`, not `from_cache`). | `messages:read` |
-| `chat.updated` | `chat`, `changes` | The chat's title, username, photo or member count changed. | `chats:read` |
-| `monitoring.started` | `monitoring` | The chat entered the monitored set (owner added it, or it joined a monitored folder). | `chats:read` |
-| `monitoring.stopped` | `monitoring` | The chat left the monitored set. | `chats:read` |
+| `message.new` | `message` | A message arrives in a monitored chat, including messages the user sends themselves (`is_outgoing: true`), and for each message the gateway finds when catching up after being offline. | `messages:read` |
+| `message.edited` | `message` | A message's text, caption or media is edited. The full message is sent, not a difference. | `messages:read` |
+| `message.deleted` | `message_ids` | Messages are deleted for everyone. | `messages:read` |
+| `chat.updated` | `chat` (full), `changes` | The chat's title, username, photo or member count changes. | `chats:read` |
+| `monitoring.started` | `monitoring` | The chat enters the monitored set. | `chats:read` |
+| `monitoring.stopped` | `monitoring` | The chat leaves the monitored set. | `chats:read` |
 
-An app whose grant lacks `chats:read` never receives `chat.updated` or `monitoring.*`; it can
-still call `GET /v1/me` to see its `effective_chat_ids`.
+An app whose grant lacks `chats:read` never receives `chat.updated` or `monitoring.*`. It can
+still call `GET /v1/me` to read its `effective_chat_ids`.
 
 ### `message.new`
+
+A text message in a group:
 
 ```json
 {
@@ -76,31 +83,31 @@ still call `GET /v1/me` to see its `effective_chat_ids`.
   "type": "message.new",
   "occurred_at": "2026-09-29T14:03:07Z",
   "recorded_at": "2026-09-29T14:03:07.412Z",
-  "chat": { "id": "-1001234567890", "type": "supergroup", "title": "Acme Community", "username": "acmecommunity" },
+  "chat": { "id": "-1001987654321", "type": "supergroup", "title": "Acme Support", "username": null },
   "message": {
     "id": "1523",
-    "chat_id": "-1001234567890",
-    "sender": { "type": "user", "id": "123456789", "display_name": "Ada Lovelace", "username": "ada", "is_bot": false },
+    "chat_id": "-1001987654321",
+    "sender": { "type": "user", "id": "123456789", "display_name": "Grace Hopper", "username": "gracehopper", "is_bot": false },
     "date": "2026-09-29T14:03:07Z",
     "edit_date": null,
     "is_outgoing": false,
-    "text": "@acmebot the export in v2.3 fails on large files, see https://acme.example/issues/812 #bug",
+    "text": "@acmebot the export in v2.3 fails on large files, see https://acme.example.com/issues/812 #bug",
     "entities": [
       { "type": "mention", "offset": 0, "length": 8 },
-      { "type": "url", "offset": 49, "length": 30 },
-      { "type": "hashtag", "offset": 80, "length": 4 }
+      { "type": "url", "offset": 54, "length": 35 },
+      { "type": "hashtag", "offset": 90, "length": 4 }
     ],
-    "reply_to": { "chat_id": "-1001234567890", "message_id": "1519" },
+    "reply_to": { "chat_id": "-1001987654321", "message_id": "1519" },
     "forward_from": null,
     "media": [],
     "media_group_id": null,
-    "link": "https://t.me/acmecommunity/1523",
+    "link": null,
     "raw_content_type": "messageText"
   }
 }
 ```
 
-A message with a photo and a caption:
+A channel post with a photo and a caption:
 
 ```json
 {
@@ -117,8 +124,8 @@ A message with a photo and a caption:
     "date": "2026-09-29T14:03:20Z",
     "edit_date": null,
     "is_outgoing": false,
-    "text": "v2.4 is out. Release notes: https://acme.example/releases/2.4",
-    "entities": [ { "type": "url", "offset": 28, "length": 33 } ],
+    "text": "v2.4 is out. Release notes: https://acme.example.com/releases/2.4",
+    "entities": [ { "type": "url", "offset": 28, "length": 37 } ],
     "reply_to": null,
     "forward_from": null,
     "media": [
@@ -142,13 +149,15 @@ A message with a photo and a caption:
 
 ### `message.edited`
 
-Same payload as `message.new`; `edit_date` is set and `occurred_at` equals it. Telegram does
-not say what changed; compare with what you stored. One event per edit: the gateway emits
-once per (chat, message, `edit_date`), whichever of Telegram's two edit notifications arrives
-first. A content change that Telegram does not stamp with an edit date (poll votes, a link
-preview finishing loading) is not an edit and produces nothing. Edits of messages the app never saw (sent
-before monitoring started) are delivered too — a consumer may see `message.edited` for an
-unknown id and should treat it as an upsert.
+The payload is the same as for `message.new`, with `edit_date` set; `occurred_at` equals it.
+
+- Telegram does not say what changed. Compare with what you stored.
+- There is one event per edit. Telegram announces an edit in two notifications; the gateway
+  emits once per chat, message and `edit_date`.
+- A content change that Telegram does not stamp with an edit date is not an edit and produces
+  no event. Examples: votes on a poll, a link preview finishing loading.
+- Edits of messages sent before the chat was monitored are delivered too. You may receive
+  `message.edited` for an id you have never seen: treat it as an upsert.
 
 ```json
 {
@@ -157,25 +166,25 @@ unknown id and should treat it as an upsert.
   "type": "message.edited",
   "occurred_at": "2026-09-29T14:05:02Z",
   "recorded_at": "2026-09-29T14:05:02.230Z",
-  "chat": { "id": "-1001234567890", "type": "supergroup", "title": "Acme Community", "username": "acmecommunity" },
+  "chat": { "id": "-1001987654321", "type": "supergroup", "title": "Acme Support", "username": null },
   "message": {
     "id": "1523",
-    "chat_id": "-1001234567890",
-    "sender": { "type": "user", "id": "123456789", "display_name": "Ada Lovelace", "username": "ada", "is_bot": false },
+    "chat_id": "-1001987654321",
+    "sender": { "type": "user", "id": "123456789", "display_name": "Grace Hopper", "username": "gracehopper", "is_bot": false },
     "date": "2026-09-29T14:03:07Z",
     "edit_date": "2026-09-29T14:05:02Z",
     "is_outgoing": false,
-    "text": "@acmebot the export in v2.3 fails on files over 1 GB, see https://acme.example/issues/812 #bug",
+    "text": "@acmebot the export in v2.3 fails on files over 1 GB, see https://acme.example.com/issues/812 #bug",
     "entities": [
       { "type": "mention", "offset": 0, "length": 8 },
-      { "type": "url", "offset": 58, "length": 30 },
-      { "type": "hashtag", "offset": 89, "length": 4 }
+      { "type": "url", "offset": 58, "length": 35 },
+      { "type": "hashtag", "offset": 94, "length": 4 }
     ],
-    "reply_to": { "chat_id": "-1001234567890", "message_id": "1519" },
+    "reply_to": { "chat_id": "-1001987654321", "message_id": "1519" },
     "forward_from": null,
     "media": [],
     "media_group_id": null,
-    "link": "https://t.me/acmecommunity/1523",
+    "link": null,
     "raw_content_type": "messageText"
   }
 }
@@ -183,9 +192,10 @@ unknown id and should treat it as an upsert.
 
 ### `message.deleted`
 
-Telegram reports deletions in batches and without content. Only deletions "for everyone" are
-emitted (Telegram also has local-only deletions, which the gateway ignores). Ids may refer to
-messages the app never received.
+Telegram reports deletions in batches and without content, so the payload is a list of ids.
+Only deletions for everyone are emitted: a message removed from the user's own view alone, or
+dropped from TDLib's local cache, produces nothing (in TDLib's terms, the event requires
+`is_permanent` and not `from_cache`). The ids may refer to messages your app never received.
 
 ```json
 {
@@ -194,16 +204,16 @@ messages the app never received.
   "type": "message.deleted",
   "occurred_at": "2026-09-29T14:06:41.900Z",
   "recorded_at": "2026-09-29T14:06:41.903Z",
-  "chat": { "id": "-1001234567890", "type": "supergroup", "title": "Acme Community", "username": "acmecommunity" },
+  "chat": { "id": "-1001987654321", "type": "supergroup", "title": "Acme Support", "username": null },
   "message_ids": ["1520", "1521"]
 }
 ```
 
 ### `chat.updated`
 
-`chat` is the full [chat object](api.md#the-chat-object) after the change; `changes` lists
-which of `title`, `username`, `photo`, `member_count` changed. Member count updates are
-coalesced: at most one `chat.updated` per chat per `05:00` for `member_count` alone.
+`chat` is the full [chat object](api.md#the-chat-object) after the change. `changes` lists
+which of `title`, `username`, `photo` and `member_count` changed. Changes to the member count
+alone are coalesced to at most one `chat.updated` per chat per `05:00`.
 
 ```json
 {
@@ -213,10 +223,10 @@ coalesced: at most one `chat.updated` per chat per `05:00` for `member_count` al
   "occurred_at": "2026-09-29T14:10:00.512Z",
   "recorded_at": "2026-09-29T14:10:00.515Z",
   "chat": {
-    "id": "-1001234567890",
+    "id": "-1001987654321",
     "type": "supergroup",
-    "title": "Acme Community (official)",
-    "username": "acmecommunity",
+    "title": "Acme Support (official)",
+    "username": null,
     "member_count": 12841,
     "is_monitored": true,
     "photo": { "media_id": "med_9aB2cD4eF6gH8jK0lM2nP4qR6sT8uV0w", "width": 640, "height": 640 }
@@ -225,14 +235,20 @@ coalesced: at most one `chat.updated` per chat per `05:00` for `member_count` al
 }
 ```
 
-### `monitoring.started` / `monitoring.stopped`
+### `monitoring.started` and `monitoring.stopped`
 
-Emitted when the owner changes the monitored set, or a monitored folder's membership changes.
-An app receives them for chats in its grant (list or folder), so it learns when its coverage
-starts and stops. `source` is `"chat"` (the owner monitored this chat explicitly) or
-`"folder"` (with `folder_id`). `occurred_at` is the moment of the change; for
-`monitoring.started`, messages from this moment on are delivered as `message.new`; earlier
-ones are reachable only via [history](api.md#history).
+Emitted when the user changes which chats the gateway monitors, or when the membership of a
+monitored folder changes. An app receives them for the chats in its grant, so it learns when
+its coverage of a chat starts and stops.
+
+| `monitoring` field | Meaning |
+|---|---|
+| `source` | `"chat"`: the user monitors this chat individually. `"folder"`: the chat is monitored because it is in a monitored folder. |
+| `folder_id`, `folder_title` | The folder, when `source` is `"folder"`; otherwise `null`. |
+
+`occurred_at` is the moment of the change. After `monitoring.started`, messages from that
+moment on arrive as `message.new`. Earlier ones are reachable only through
+[history](api.md#history).
 
 ```json
 {
@@ -241,7 +257,7 @@ ones are reachable only via [history](api.md#history).
   "type": "monitoring.started",
   "occurred_at": "2026-09-29T14:12:30.001Z",
   "recorded_at": "2026-09-29T14:12:30.004Z",
-  "chat": { "id": "-1001987654321", "type": "channel", "title": "Acme Support", "username": "acmesupport" },
+  "chat": { "id": "-1001555000111", "type": "channel", "title": "Industry News", "username": "industrynews" },
   "monitoring": { "source": "folder", "folder_id": "3", "folder_title": "Product" }
 }
 ```
@@ -253,7 +269,7 @@ ones are reachable only via [history](api.md#history).
   "type": "monitoring.stopped",
   "occurred_at": "2026-09-30T08:00:00.120Z",
   "recorded_at": "2026-09-30T08:00:00.121Z",
-  "chat": { "id": "-1001987654321", "type": "channel", "title": "Acme Support", "username": "acmesupport" },
+  "chat": { "id": "-1001987654321", "type": "supergroup", "title": "Acme Support", "username": null },
   "monitoring": { "source": "chat", "folder_id": null, "folder_title": null }
 }
 ```
@@ -262,52 +278,58 @@ ones are reachable only via [history](api.md#history).
 
 ## Chat summary
 
-The `chat` field on `message.*` and `monitoring.*` events is a summary, enough to route and
-label without a lookup:
+The `chat` field on `message.*` and `monitoring.*` events is a summary: enough to route and
+label an event without a lookup.
 
 ```json
-{ "id": "-1001234567890", "type": "supergroup", "title": "Acme Community", "username": "acmecommunity" }
+{ "id": "-1001234567890", "type": "channel", "title": "Acme Product Updates", "username": "acmeupdates" }
 ```
 
-`type` is `private`, `basic_group`, `supergroup` or `channel` (defined in
-[api.md](api.md#chat-ids)). `username` is `null` when the chat has none. The full chat
-object (member count, photo, `is_monitored`) is in `chat.updated` and at `GET /v1/chats`.
+| Field | Meaning |
+|---|---|
+| `id` | The chat id, Telegram's number for the chat, as a string. |
+| `type` | `private`, `basic_group`, `supergroup` or `channel`. A **supergroup** is a large group in which every member can post; a **channel** is a broadcast feed in which only admins post. All four are defined in [api.md](api.md#chat-ids). |
+| `title` | The chat's name. |
+| `username` | The public handle without `@`, or `null` when the chat has none. |
+
+The full chat object, with member count, photo and `is_monitored`, is in `chat.updated` and
+at `GET /v1/chats` ([api.md](api.md#the-chat-object)).
 
 ---
 
 ## Message object
 
-The same object appears in `message.new`, `message.edited`, and
+The same object appears in `message.new`, in `message.edited`, and in the response of
 `GET /v1/chats/{chat_id}/messages`.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `id` | string | Message id, unique within the chat (see [api.md](api.md#message-ids)). Increases with time within a chat, but is not contiguous. |
-| `chat_id` | string | The chat's id (repeated from the envelope so the object is self-contained in history responses). |
-| `sender` | object | Who sent it — see [Sender](#sender). |
-| `date` | timestamp | When it was sent (Telegram's server time, whole seconds). |
+| `id` | string | The message id, unique within its chat ([api.md](api.md#message-ids)). It increases with time within a chat but is not contiguous. |
+| `chat_id` | string | The chat's id, repeated from the envelope so that the object stands alone in history responses. |
+| `sender` | object | Who sent it. See [Sender](#sender). |
+| `date` | timestamp | When it was sent: Telegram's server time, in whole seconds. |
 | `edit_date` | timestamp or null | When it was last edited. |
-| `is_outgoing` | boolean | `true` when the owner's own account sent it. |
-| `text` | string | The message text, or the **caption** for a media message; `""` when neither. Plain text: formatting (bold, italic, code) is stripped; the [entities](#entities) that matter for consumers are kept with offsets. |
-| `entities` | array | See [Entities](#entities). Empty array when none. |
-| `reply_to` | object or null | `{ "chat_id", "message_id" }` of the message this replies to. Usually the same chat; a reply can point at a message in another chat (a channel's linked discussion), hence `chat_id`. The replied-to message is not included; fetch it via history if needed. |
-| `forward_from` | object or null | Where a forwarded message came from — see [Forward origin](#forward-origin). |
-| `media` | array | Zero or one [media object](#media-object). (Telegram allows one file per message; an "album" is several messages sharing a `media_group_id`.) An array so a future format can carry more without a breaking change. |
-| `media_group_id` | string or null | Set when the message is part of an album; all messages of the album share it and arrive as separate `message.new` events. |
-| `link` | string or null | `https://t.me/<username>/<id>` when the chat has a public username; otherwise `null`. |
-| `raw_content_type` | string | TDLib's `messageContent` type name (`"unknown"` if TDLib sent none) (`messageText`, `messagePhoto`, `messagePoll`, `messagePinMessage`, …). **Unstable escape hatch**: it tells a consumer *what kind* of message it is looking at when the gateway does not model the content (a poll, a pinned-message notice, a location). Its values follow TDLib and may change when the pinned TDLib commit is bumped. Do not build logic on it beyond logging and counting. |
+| `is_outgoing` | boolean | `true` when the user's own account sent it. |
+| `text` | string | The message text, or the caption of a media message; `""` when there is neither. It is plain text: formatting such as bold, italic and code is stripped. |
+| `entities` | array | Spans of `text` with a meaning. See [Entities](#entities). Empty when there are none. |
+| `reply_to` | object or null | `{ "chat_id", "message_id" }` of the message this one replies to. It is usually in the same chat, but a reply can point into another chat (a channel's linked discussion group), hence `chat_id`. The replied-to message is not included; fetch it through history if you need it. |
+| `forward_from` | object or null | Where a forwarded message came from. See [Forward origin](#forward-origin). |
+| `media` | array | Zero or one [media object](#media-object). Telegram allows one file per message; an album is several messages that share a `media_group_id`. The field is an array so that more can be carried later without a breaking change. |
+| `media_group_id` | string or null | Set when the message is part of an album. All messages of the album share the value and arrive as separate `message.new` events. |
+| `link` | string or null | `https://t.me/<username>/<id>` when the chat has a public username, otherwise `null`. |
+| `raw_content_type` | string | The name of TDLib's content type for the message: `messageText`, `messagePhoto`, `messagePoll`, `messagePinMessage` and so on, or `"unknown"` if TDLib supplied none. **This field is not stable.** It tells you what kind of message you are looking at when the gateway does not model its content. Its values follow TDLib and can change when the gateway moves to a newer TDLib. Use it for logging and counting, not for logic. |
 
-Messages the gateway does not model (polls, locations, contacts, service messages like
-"X joined the group", stickers' emoji) still produce a `message.new` with `text: ""` (or the
-caption if any), `media: []` (or the sticker/file), and `raw_content_type` naming the kind.
-The gateway never drops a message from a monitored chat.
+Messages whose content the gateway does not model (polls, locations, contacts, service
+messages such as "Grace joined the group") still produce a `message.new`. `text` is `""`, or
+the caption if there is one; `media` is empty, or holds the sticker or file; and
+`raw_content_type` names the kind. The gateway never drops a message from a monitored chat.
 
 ---
 
 ## Sender
 
 ```json
-{ "type": "user", "id": "123456789", "display_name": "Ada Lovelace", "username": "ada", "is_bot": false }
+{ "type": "user", "id": "123456789", "display_name": "Grace Hopper", "username": "gracehopper", "is_bot": false }
 ```
 
 ```json
@@ -316,51 +338,60 @@ The gateway never drops a message from a monitored chat.
 
 | Field | Meaning |
 |---|---|
-| `type` | `user` — a person or bot. `chat` — a channel posting under its own name, or a group admin posting anonymously (Telegram attributes those to the group itself). |
-| `id` | User id (positive) or chat id. |
-| `display_name` | The user's first and last name joined with a space, or the chat's title. Never empty (falls back to `"Deleted Account"` for users Telegram no longer resolves). |
-| `username` | Public handle without `@`, or `null`. |
-| `is_bot` | Present only for `type: "user"`. |
+| `type` | `user`: a person or a bot. `chat`: a channel posting under its own name, or a group admin posting anonymously, which Telegram attributes to the group itself. |
+| `id` | The user id (positive) or the chat id. |
+| `display_name` | The user's first and last name joined with a space, or the chat's title. Never empty: a user whom Telegram no longer resolves is `"Deleted Account"`, with `is_bot: false`. |
+| `username` | The public handle without `@`, or `null`. |
+| `is_bot` | Present only when `type` is `user`. |
 
 ---
 
 ## Entities
 
-An **entity** is a span of the text with a meaning. Telegram provides many (bold, italic,
-spoiler…); the gateway keeps the subset a consumer routes on:
+An **entity** is a span of `text` that has a meaning. Telegram defines many kinds; the
+gateway keeps the ones an app is likely to act on:
 
-| `type` | Span means | Extra field |
+| `type` | The span is | Extra field |
 |---|---|---|
-| `mention` | `@username` in the text | |
-| `text_mention` | A user mentioned by name without a username | `user_id` |
+| `mention` | `@username` | |
+| `text_mention` | The name of a user who has no username | `user_id` |
 | `hashtag` | `#tag` | |
 | `cashtag` | `$TICKER` | |
-| `url` | A URL written in the text | |
-| `text_link` | Text that links somewhere else (the URL is not in the text) | `url` |
+| `url` | A URL written out in the text | |
+| `text_link` | Text that links elsewhere; the URL is not in the text | `url` |
 | `bot_command` | `/command` | |
-| `email` | An email address | |
+| `email` | An e-mail address | |
 
-Each entity has `offset` and `length`. **Offsets are in UTF-16 code units**, the way Telegram
-defines them and the way JavaScript's `String.prototype.slice` counts. In Python, convert
-with `text.encode("utf-16-le")` and slice at `offset * 2` (an emoji before an entity shifts
-its offset by 2, not 1). Entities are sorted by `offset` and do not overlap.
+Each entity has an `offset` and a `length`. Entities are sorted by `offset` and do not
+overlap.
+
+**Offsets and lengths are in UTF-16 code units.** That is how Telegram defines them, and it
+is how JavaScript strings count, so `text.slice(offset, offset + length)` is correct in
+JavaScript. In languages that count code points, convert first: an emoji before an entity
+moves its offset by 2, not 1. In Python:
+
+```python
+def entity_text(text: str, offset: int, length: int) -> str:
+    utf16 = text.encode("utf-16-le")
+    return utf16[offset * 2 : (offset + length) * 2].decode("utf-16-le")
+```
 
 ---
 
 ## Forward origin
 
 ```json
-{ "type": "chat", "id": "-1001111111111", "display_name": "Some Channel", "username": "somechannel", "message_id": "88", "date": "2026-09-28T19:20:00Z" }
+{ "type": "chat", "id": "-1001555000111", "display_name": "Industry News", "username": "industrynews", "message_id": "88", "date": "2026-09-28T19:20:00Z" }
 ```
 
-| `type` | Means | Fields present |
+| `type` | Forwarded from | Fields set |
 |---|---|---|
-| `user` | Forwarded from a user | `id`, `display_name`, `username`, `date` |
-| `chat` | Forwarded from a channel or group post | `id`, `display_name`, `username`, `message_id` (in the origin chat), `date` |
-| `hidden_user` | The origin user hides their account when forwarded | `display_name` (the name shown), `date` |
+| `user` | A user | `id`, `display_name`, `username`, `date` |
+| `chat` | A post in a channel or group | `id`, `display_name`, `username`, `message_id` (in the origin chat), `date` |
+| `hidden_user` | A user who hides their account on forwarded messages | `display_name` (the name shown), `date` |
 
-`date` is when the original was sent. `id`, `username`, `message_id` are `null` when not
-applicable.
+`date` is when the original was sent. `id`, `username` and `message_id` are `null` where they
+do not apply.
 
 ---
 
@@ -381,82 +412,73 @@ applicable.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `media_id` | string | Opaque, stable per Telegram file. Fetch the bytes at `GET /v1/media/{media_id}` ([api.md](api.md#media)) with `media:read`. |
-| `kind` | string | `photo`, `video`, `document`, `audio` (music), `voice` (voice note), `video_note` (round video), `sticker`, `animation` (GIF-like). Consumers must tolerate new kinds. |
-| `mime` | string or null | MIME type when Telegram reports one (`image/jpeg` for photos). |
-| `size` | number or null | Bytes, when known before download. |
-| `width`, `height` | number or null | Pixels for photos, videos, stickers, animations; `null` otherwise. For a photo, the largest size Telegram offers; that is the size served. |
-| `duration_seconds` | number or null | Whole seconds for video, audio, voice, video_note, animation. |
-| `file_name` | string or null | The original file name for documents, audio and video when the sender's client supplied one. |
+| `media_id` | string | Opaque, and stable per Telegram file. Fetch the bytes at `GET /v1/media/{media_id}` with the `media:read` scope ([api.md](api.md#media)). |
+| `kind` | string | One of the kinds below. Tolerate kinds you do not know. |
+| `mime` | string or null | The MIME type, when Telegram reports one. |
+| `size` | number or null | Size in bytes. `null` until Telegram reports it. For some videos Telegram reports only an expected size, and that is what is given. |
+| `width`, `height` | number or null | Pixels, for photos, videos, stickers, animations and video notes; otherwise `null`. |
+| `duration_seconds` | number or null | Whole seconds, for video, audio, voice, video notes and animations. |
+| `file_name` | string or null | The original file name of a document, audio file or video, when the sender's Telegram app supplied one. |
 
-The caption of a media message is the message's `text`, not a field of the media object,
-so text-processing code is the same for every message.
+| `kind` | What it is | Notes |
+|---|---|---|
+| `photo` | A photo | The largest size Telegram offers, which is the size served. `mime` is `image/jpeg`. |
+| `video` | A video | |
+| `document` | A file of any type | |
+| `audio` | A music or audio file | |
+| `voice` | A voice note | |
+| `video_note` | A round video message | `width` and `height` are both the side length. `mime` is `video/mp4`. |
+| `sticker` | A sticker | `mime` follows the sticker's format: `image/webp`, `application/x-tgsticker` or `video/webm`. |
+| `animation` | A silent looping clip (GIF-like) | |
 
-A chat's `photo` (in the [chat object](api.md#the-chat-object)) is a reduced media reference:
-`{ "media_id", "width", "height" }`, always a JPEG at Telegram's "big" size, reported as
-640×640 (TDLib does not give chat photo dimensions).
+The caption of a media message is the message's `text`, not a field of the media object, so
+the same text-handling code serves every message.
 
-Kind-specific notes: `sticker` carries `mime` from its format (`image/webp`,
-`application/x-tgsticker`, `video/webm`); `video_note` reports its side length as both
-`width` and `height` and `mime` `video/mp4`; `photo` is the largest size Telegram offers
-with `mime` `image/jpeg`; `size` is `null` until Telegram reports it (some videos only carry
-an expected size, which is used).
+A chat's `photo`, in the [chat object](api.md#the-chat-object), is a reduced media object:
+`{ "media_id", "width", "height" }`. It is always a JPEG at Telegram's "big" size, reported as
+640×640 because Telegram does not supply the dimensions of chat photos.
 
 ---
 
-## What is not included
+## Not supported
 
-Deliberately absent from format version 1, so a consumer does not go looking:
+Format version 1 does not carry the following.
 
-- **Reactions** (emoji reactions on messages) and **view counts** of channel posts.
-- **Polls**: a poll message has `raw_content_type: "messagePoll"` and empty `text`; options
-  and votes are not exposed.
-- **Formatting** entities (bold, italic, code, spoiler, underline, strikethrough) — `text`
-  is plain.
-- **Forum topics** (threads inside a supergroup): messages carry no topic id.
-- **Read state**, **pinned** flags, **scheduled** messages, **message threads/comments**
-  beyond `reply_to`.
-- **Private chats and unmonitored groups** — not a format limitation; they never leave the
-  gateway ([grants.md](grants.md#privacy-principles)).
-- **Anything about the owner's account** beyond `is_outgoing`.
+| Not included | Detail |
+|---|---|
+| Reactions and view counts | Emoji reactions on messages, and the view counter of channel posts. |
+| Polls | A poll produces a message with `raw_content_type: "messagePoll"` and empty `text`. Its options and votes are not exposed. |
+| Text formatting | Bold, italic, code, spoiler, underline and strikethrough are stripped; `text` is plain. |
+| Forum topics | Messages in a supergroup with topics carry no topic id. |
+| Read state, pinned flags, scheduled messages | |
+| Comment threads | Nothing beyond `reply_to`. |
+| Locations, contacts and service messages as structured data | They arrive as messages with empty `text` and a `raw_content_type`. |
+| The user's account | Nothing about it beyond `is_outgoing`. |
+| Private chats and unmonitored chats | This is not a limit of the format. They never leave the gateway ([grants.md](grants.md#what-the-gateway-guarantees)). |
 
-If a consumer needs one of these, the format grows additively (below); nothing here is
-blocked by design, only by v1 scope.
+Any of these can be added later as an additive change, described next.
 
 ---
 
 ## Versioning
 
-Every event, and every webhook body, carries `"v": 1`. The API path (`/v1/…`) and the event
+Every event and every webhook body carries `"v": 1`. The API path (`/v1/…`) and the event
 format version move together.
 
-**Additive changes** keep `v: 1` and may appear at any time without notice:
+**Additive changes** keep `v: 1` and can appear at any time without notice:
 
-- new fields on any object (with `null` when unknown for older events)
+- new fields on any object, `null` for older events where the value is unknown
 - new event types
-- new `entities[].type`, `media[].kind`, `forward_from.type`, `sender.type` values
-- new `raw_content_type` values (these follow TDLib and are not part of the contract at all)
+- new values of `entities[].type`, `media[].kind`, `forward_from.type` and `sender.type`
+- new values of `raw_content_type`, which follow TDLib and are not part of the contract
 
-Therefore a consumer **must**: ignore unknown fields, ignore unknown event types, and treat
-enumerations as open (a `switch` with a default that logs and continues).
+An app must therefore ignore unknown fields, ignore unknown event types, and treat every
+enumeration as open: a `switch` with a default branch that logs and continues.
 
-**Breaking changes** — removing or renaming a field, changing a type (for example a string to
-an object), changing the meaning of `seq` or `since`, changing offset units — bump `v` to `2`
-and are served only under `/v2/…`. `/v1/…` keeps serving `v: 1` events, including events
-recorded after v2 exists, for as long as v1 is supported; a deprecation is announced in this
-file with a date at least 90 days out. Events recorded under v1 remain readable under v2 (the
-gateway renders from stored data, not from cached JSON).
-
----
-
-## Deviations and clarifications from the first draft
-
-Recorded when the daemon was built (2026-09-29); each is also applied above.
-
-- `message.edited` is emitted once per `edit_date`; content changes without an edit date
-  are not edits.
-- `message.deleted` follows TDLib's `is_permanent && !from_cache`.
-- Chat photos are 640×640 by convention; sticker and video-note media fields as noted under
-  "Media object".
-- A `sender` of type `user` whom Telegram no longer resolves is `"Deleted Account"` with
-  `is_bot: false`.
+**Breaking changes** bump `v` to `2` and are served only under `/v2/…`. Breaking means
+removing or renaming a field, changing a field's type, changing the meaning of `seq` or
+`since`, or changing the unit of entity offsets. `/v1/…` keeps serving `v: 1` events,
+including events recorded after version 2 exists, for as long as version 1 is supported. A
+deprecation is announced in this file with a date at least 90 days ahead. Events recorded
+under version 1 stay readable under version 2, because the gateway renders events from
+stored data rather than from stored JSON.
