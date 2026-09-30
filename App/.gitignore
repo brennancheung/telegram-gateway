@@ -1,0 +1,2 @@
+# Build output of App/run.sh (xcodebuild -derivedDataPath App/.derived).
+.derived/

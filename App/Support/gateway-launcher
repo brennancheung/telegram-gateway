@@ -1,0 +1,39 @@
+#!/bin/sh
+# Started by launchd for the LaunchAgent com.brennancheung.telegram-gateway.daemon (the plist
+# is in this app bundle under Contents/Library/LaunchAgents). It locates the GatewayDaemon
+# binary and replaces itself with it, so launchd supervises the daemon directly.
+#
+# Where the binary comes from, in order:
+#   1. $TGW_DAEMON_PATH (environment; launchd agents normally have none)
+#   2. "daemon_path" in ~/Library/Application Support/TelegramGateway/config.json — written by
+#      the menu bar app when the owner clicks "Start gateway" (development: <repo>/.build/debug/GatewayDaemon)
+#   3. Contents/MacOS/GatewayDaemon inside the bundle (a shipped build; not bundled yet).
+#      This script lives in Contents/Resources: codesign rejects unsigned scripts in MacOS.
+#
+# Output goes to ~/Library/Logs/TelegramGateway/daemon.log. launchd does not expand "~" in
+# StandardOutPath, which is why the redirect happens here.
+
+HOME_DIR="${HOME:-$(cd ~ && pwd)}"
+DATA_DIR="${TGW_HOME:-$HOME_DIR/Library/Application Support/TelegramGateway}"
+CONFIG="$DATA_DIR/config.json"
+LOG_DIR="$HOME_DIR/Library/Logs/TelegramGateway"
+LOG="$LOG_DIR/daemon.log"
+mkdir -p "$LOG_DIR"
+
+DAEMON="$TGW_DAEMON_PATH"
+if [ -z "$DAEMON" ] && [ -f "$CONFIG" ]; then
+	DAEMON="$(/usr/bin/plutil -extract daemon_path raw -o - "$CONFIG" 2>/dev/null)"
+fi
+if [ -z "$DAEMON" ] || [ ! -x "$DAEMON" ]; then
+	DAEMON="$(cd "$(dirname "$0")/../MacOS" 2>/dev/null && pwd)/GatewayDaemon"
+fi
+
+if [ ! -x "$DAEMON" ]; then
+	echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) gateway-launcher: no daemon binary (config daemon_path=\"$(/usr/bin/plutil -extract daemon_path raw -o - "$CONFIG" 2>/dev/null)\", tried bundled $DAEMON). Build it with 'swift build' in the repository, then click Restart gateway in the menu bar app." >> "$LOG"
+	# launchd's KeepAlive would respawn us immediately; wait so the log does not fill up.
+	sleep 30
+	exit 78
+fi
+
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) gateway-launcher: exec $DAEMON" >> "$LOG"
+exec "$DAEMON" >> "$LOG" 2>&1

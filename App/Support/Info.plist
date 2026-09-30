@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Menu bar only: no Dock icon, no app menu. -->
+	<key>LSUIElement</key>
+	<true/>
+	<!-- Development only. Xcode substitutes $(SRCROOT) at build time, so the app can find
+	     <repo>/.build/debug/GatewayDaemon wherever it was built. A shipped build does not
+	     carry this key and looks for the daemon inside its own bundle instead. -->
+	<key>TGWRepositoryRoot</key>
+	<string>$(SRCROOT)/..</string>
+</dict>
+</plist>

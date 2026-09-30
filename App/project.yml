@@ -1,0 +1,77 @@
+# XcodeGen specification for App/TelegramGateway.xcodeproj.
+#
+# The checked-in .xcodeproj is the source of truth and builds from a clean checkout without
+# XcodeGen. This file mirrors it so the project can be regenerated (`brew install xcodegen`,
+# then `xcodegen generate` in App/) after structural changes; keep the two in sync.
+name: TelegramGateway
+options:
+  bundleIdPrefix: com.brennancheung
+  deploymentTarget:
+    macOS: "15.0"
+  xcodeVersion: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+targets:
+  TelegramGateway:
+    type: application
+    platform: macOS
+    sources:
+      - path: TelegramGateway
+    info:
+      path: Support/Info.plist
+      properties:
+        LSUIElement: true
+        TGWRepositoryRoot: "$(SRCROOT)/.."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.brennancheung.telegram-gateway
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_LSUIElement: true
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        INFOPLIST_KEY_CFBundleDisplayName: Telegram Gateway
+        ENABLE_APP_SANDBOX: false
+        ENABLE_HARDENED_RUNTIME: false
+        ENABLE_PREVIEWS: true
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+    buildPhases:
+      - copyFiles:
+          destination: wrapper
+          subpath: Contents/Library/LaunchAgents
+          files:
+            - Support/LaunchAgents/com.brennancheung.telegram-gateway.daemon.plist
+      - copyFiles:
+          destination: resources
+          files:
+            - Support/gateway-launcher
+  TelegramGatewayTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: TelegramGatewayTests
+    dependencies:
+      - target: TelegramGateway
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.brennancheung.telegram-gateway.tests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TelegramGateway.app/Contents/MacOS/TelegramGateway"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  TelegramGateway:
+    build:
+      targets:
+        TelegramGateway: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - TelegramGatewayTests

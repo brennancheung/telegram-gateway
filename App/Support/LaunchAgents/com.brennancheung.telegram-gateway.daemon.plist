@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Registered by the menu bar app through SMAppService.agent(plistName:). The Label must
+	     equal this file's name without ".plist". BundleProgram is relative to the app bundle:
+	     the launcher script finds the daemon binary (development checkout or, later, the
+	     bundled copy) and execs it. See docs/app.md. -->
+	<key>Label</key>
+	<string>com.brennancheung.telegram-gateway.daemon</string>
+	<key>BundleProgram</key>
+	<string>Contents/Resources/gateway-launcher</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>com.brennancheung.telegram-gateway</string>
+	</array>
+</dict>
+</plist>
