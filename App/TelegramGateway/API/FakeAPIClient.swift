@@ -25,6 +25,25 @@ actor FakeAPIClient: APIClient {
         case loggedInQuiet
         /// Logged in, but Telegram's connection is down for the moment.
         case reconnecting
+        /// Running, but started without a Telegram key: `auth_state` is `unknown` until a
+        /// reload (or a restart) picks the key up.
+        case telegramDisabled
+    }
+
+    /// How `POST /v1/admin/reload` behaves.
+    enum ReloadMode: Sendable {
+        /// Starts Telegram if it was off.
+        case works
+        /// The configuration the gateway reads has no key: Telegram stays off.
+        case disabled
+        /// Claims to have started Telegram, but the session never comes up.
+        case stuck
+        /// An older gateway without the endpoint: 404.
+        case missing
+        /// Another reload is running: 409 `reload_in_progress` once, then it works.
+        case busyOnce
+        /// The gateway could not replace its Telegram session in place: 500.
+        case internalError
     }
 
     private var scenario: Scenario
@@ -41,6 +60,8 @@ actor FakeAPIClient: APIClient {
     private var headSeq = 4812
     private let startedAt = Date().addingTimeInterval(-5 * 3600)
     private var nextGrant = 1
+    private var reloadMode = ReloadMode.works
+    private(set) var reloadCalls = 0
 
     /// Set to fail every call with this error (tests of the error paths).
     var failure: APIClientError?
@@ -50,6 +71,7 @@ actor FakeAPIClient: APIClient {
         self.has2FA = has2FA
         switch scenario {
         case .unreachable, .loggedOut: authState = .waitPhoneNumber
+        case .telegramDisabled: authState = .unknown
         case .waitingForQR: authState = .waitQRConfirmation
         case .waitingForCode: authState = .waitCode; phoneHint = "+1 555 ••• 4567"
         case .waitingForPassword: authState = .waitPassword
@@ -77,6 +99,14 @@ actor FakeAPIClient: APIClient {
     // MARK: Test hooks
 
     func setFailure(_ error: APIClientError?) { failure = error }
+
+    func setReloadMode(_ mode: ReloadMode) { reloadMode = mode }
+
+    /// Simulates the gateway process being restarted: it reads its configuration again, so a
+    /// Telegram session that was off comes up.
+    func simulateRestarted() {
+        if authState == .unknown { authState = .waitPhoneNumber }
+    }
 
     /// Simulates the QR code being scanned on the phone.
     func simulateQRScanned() {
@@ -106,6 +136,28 @@ actor FakeAPIClient: APIClient {
             webhooks: WebhookCounts(active: active, retrying: retrying, paused: paused),
             eventsLastHour: 37, oldestSeq: 1, mediaCacheBytes: 128 * 1024 * 1024,
             backfill: BackfillStatus(inProgress: false, chatsPending: 0))
+    }
+
+    func reload() async throws -> ReloadResult {
+        try gate()
+        reloadCalls += 1
+        switch reloadMode {
+        case .missing:
+            throw APIClientError.api(APIError(code: "not_found", message: "Unknown route.", details: [:]), status: 404, passwordHint: nil)
+        case .disabled:
+            return ReloadResult(telegram: .disabled)
+        case .busyOnce:
+            reloadMode = .works
+            throw APIClientError.api(APIError(code: "reload_in_progress", message: "A reload is already running.", details: [:]), status: 409, passwordHint: nil)
+        case .internalError:
+            throw APIClientError.api(APIError(code: "internal", message: "TDLib did not close.", details: [:]), status: 500, passwordHint: nil)
+        case .stuck:
+            return ReloadResult(telegram: .started)
+        case .works:
+            guard authState == .unknown else { return ReloadResult(telegram: .unchanged) }
+            authState = .waitPhoneNumber
+            return ReloadResult(telegram: .started)
+        }
     }
 
     private var tdlib: TDLibState {
@@ -138,6 +190,7 @@ actor FakeAPIClient: APIClient {
 
     func requestQRLogin() async throws -> AuthInfo {
         try gate()
+        try requireTelegram()
         qrCounter += 1
         authState = .waitQRConfirmation
         return authInfo
@@ -145,6 +198,7 @@ actor FakeAPIClient: APIClient {
 
     func submitPhoneNumber(_ phoneNumber: String) async throws -> AuthInfo {
         try gate()
+        try requireTelegram()
         guard phoneNumber.hasPrefix("+"), phoneNumber.count >= 8 else {
             throw invalid("phone_number", "Phone number must be in international format, e.g. +15551234567.")
         }
@@ -343,6 +397,13 @@ actor FakeAPIClient: APIClient {
     private func gate() throws {
         if let failure { throw failure }
         if case .unreachable = scenario { throw APIClientError.unreachable("Could not connect to the server.") }
+    }
+
+    /// Login calls need a Telegram session; a gateway without a key answers 503.
+    private func requireTelegram() throws {
+        guard authState.isTelegramRunning else {
+            throw APIClientError.api(APIError(code: "not_logged_in", message: "The gateway has no Telegram session.", details: ["auth_state": .string(authState.rawValue)]), status: 503, passwordHint: nil)
+        }
     }
 
     private func requireLogin() throws {

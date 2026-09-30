@@ -249,6 +249,145 @@ struct AppModelTests {
         #expect(model.screen == .login)
     }
 
+    @Test("Continue with a gateway that is already running reloads it and waits for Telegram")
+    func connectReloadsRunningGateway() async throws {
+        // A gateway installed from the command line, started before there was a key.
+        let model = AppModel.preview(.telegramDisabled, credentials: false, onboarded: false)
+        let fake = try #require(model.client as? FakeAPIClient)
+        await model.refresh()
+        #expect(model.screen == .connect)
+        #expect(model.authState == .unknown)
+        await model.connect(apiId: 12345, apiHash: "0123456789abcdef0123456789abcdef")
+        #expect(await fake.reloadCalls == 1)
+        // Reloaded in place: nothing was restarted, registered or started.
+        #expect(model.daemon.restarts.isEmpty)
+        #expect(model.daemon.agentState == .notRegistered)
+        #expect(!model.daemon.isForegroundRunning)
+        #expect(model.startPhase == .idle)
+        #expect(model.authState == .waitPhoneNumber)
+        #expect(model.screen == .login)
+    }
+
+    @Test("A reload that leaves Telegram disabled keeps Connect up with the reason")
+    func connectReloadDisabled() async throws {
+        let model = AppModel.preview(.telegramDisabled, credentials: false, onboarded: false)
+        let fake = try #require(model.client as? FakeAPIClient)
+        await fake.setReloadMode(.disabled)
+        await model.refresh()
+        await model.connect(apiId: 12345, apiHash: "0123456789abcdef0123456789abcdef")
+        guard case .failed(let reason) = model.startPhase else {
+            Issue.record("expected a failure, got \(model.startPhase)")
+            return
+        }
+        #expect(reason.contains("without the Telegram key"))
+        // Not advanced to sign-in, although the key is saved and the gateway answers.
+        #expect(model.config.hasCredentials)
+        #expect(model.reachable)
+        #expect(model.screen == .connect)
+        #expect(model.headline == .init(tone: .failed, phrase: "Telegram didn't start"))
+        #expect(model.daemon.restarts.isEmpty)
+    }
+
+    @Test("Telegram that never comes up after a reload is a failure, not a silent success")
+    func connectReloadStuck() async throws {
+        let model = AppModel.preview(.telegramDisabled, credentials: false, onboarded: false)
+        let fake = try #require(model.client as? FakeAPIClient)
+        await fake.setReloadMode(.stuck)
+        await model.refresh()
+        await model.connect(apiId: 12345, apiHash: "0123456789abcdef0123456789abcdef")
+        guard case .failed(let reason) = model.startPhase else {
+            Issue.record("expected a failure, got \(model.startPhase)")
+            return
+        }
+        #expect(reason.contains("Telegram didn't start in it"))
+        #expect(model.authState == .unknown)
+        #expect(model.screen == .connect)
+        // Trying again once the gateway behaves moves on.
+        await fake.setReloadMode(.works)
+        await model.connect(apiId: 12345, apiHash: "0123456789abcdef0123456789abcdef")
+        #expect(model.startPhase == .idle)
+        #expect(model.screen == .login)
+    }
+
+    @Test("An older gateway without the reload endpoint is restarted instead")
+    func connectFallsBackToRestart() async throws {
+        let model = AppModel.preview(.telegramDisabled, credentials: false, onboarded: false)
+        let fake = try #require(model.client as? FakeAPIClient)
+        await fake.setReloadMode(.missing)
+        model.daemon.previewRestartHook = { await fake.simulateRestarted() }
+        await model.refresh()
+        await model.connect(apiId: 12345, apiHash: "0123456789abcdef0123456789abcdef")
+        #expect(await fake.reloadCalls == 1)
+        // Not started by this app, so the gateway installed from the command line is the one.
+        #expect(model.daemon.restarts == [.commandLineAgent])
+        #expect(model.startPhase == .idle)
+        #expect(model.screen == .login)
+    }
+
+    @Test("A reload already in progress is waited for; a reload the gateway cannot do becomes a restart")
+    func connectReloadBusyAndInternal() async throws {
+        let busy = AppModel.preview(.telegramDisabled, credentials: false, onboarded: false)
+        let busyFake = try #require(busy.client as? FakeAPIClient)
+        await busyFake.setReloadMode(.busyOnce)
+        await busy.refresh()
+        await busy.connect(apiId: 12345, apiHash: "0123456789abcdef0123456789abcdef")
+        #expect(await busyFake.reloadCalls == 2)
+        #expect(busy.daemon.restarts.isEmpty)
+        #expect(busy.screen == .login)
+
+        let broken = AppModel.preview(.telegramDisabled, credentials: false, onboarded: false)
+        let brokenFake = try #require(broken.client as? FakeAPIClient)
+        await brokenFake.setReloadMode(.internalError)
+        broken.daemon.previewRestartHook = { await brokenFake.simulateRestarted() }
+        await broken.refresh()
+        await broken.connect(apiId: 12345, apiHash: "0123456789abcdef0123456789abcdef")
+        #expect(broken.daemon.restarts == [.commandLineAgent])
+        #expect(broken.screen == .login)
+    }
+
+    @Test("No reload endpoint and no gateway to restart is reported")
+    func connectFallbackWithNothingToRestart() async throws {
+        let model = AppModel.preview(.telegramDisabled, credentials: false, onboarded: false)
+        let fake = try #require(model.client as? FakeAPIClient)
+        await fake.setReloadMode(.missing)
+        model.daemon.previewCommandLineAgentInstalled = false
+        await model.refresh()
+        await model.connect(apiId: 12345, apiHash: "0123456789abcdef0123456789abcdef")
+        #expect(model.startPhase == .failed("No running gateway was found to restart."))
+        #expect(model.daemon.restarts.isEmpty)
+        #expect(model.screen == .connect)
+        // Cancel leaves the Connect screen; sign-in then explains that Telegram is not running.
+        model.cancelConnect()
+        #expect(model.startPhase == .idle)
+        #expect(model.screen == .login)
+    }
+
+    @Test("Restart acts on whichever gateway is running")
+    func restartTargets() async {
+        let model = AppModel.preview(.loggedIn)
+        await model.refresh()
+        // Neither started nor registered by this app: the one `tgw daemon install` registered.
+        await model.restartGatewayAndWait()
+        #expect(model.daemon.restarts == [.commandLineAgent])
+        #expect(model.lastError == nil)
+        // Registered by this app.
+        model.daemon.register(config: model.config)
+        await model.restartGatewayAndWait()
+        #expect(model.daemon.restarts.last == .appAgent)
+        // Running inside this app wins over everything else.
+        model.daemon.runInForeground(config: model.config)
+        await model.restartGatewayAndWait()
+        #expect(model.daemon.restarts == [.commandLineAgent, .appAgent, .child])
+        // Nothing of the three.
+        model.daemon.stopForeground()
+        model.daemon.unregister()
+        model.daemon.previewCommandLineAgentInstalled = false
+        await model.restartGatewayAndWait()
+        #expect(model.daemon.restarts.count == 3)
+        #expect(model.lastError == "No running gateway was found to restart.")
+        #expect(model.reachable)
+    }
+
     // MARK: Step 2
 
     @Test("QR sign-in: link, rotation, scan, password; first sign-in lands on Chats")

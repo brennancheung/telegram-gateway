@@ -132,6 +132,11 @@ enum AuthState: String, LenientStringEnum, Hashable {
 
     var isLoggedIn: Bool { self == .ready }
 
+    /// Whether the gateway's Telegram side is up at all. `unknown` is what a gateway reports
+    /// while it has no Telegram key (or has not started its Telegram session yet); `closed` is
+    /// a session that was shut down.
+    var isTelegramRunning: Bool { self != .unknown && self != .closed }
+
     var label: String {
         switch self {
         case .waitPhoneNumber: "Not logged in"
@@ -220,6 +225,39 @@ struct AdminStatus: Decodable, Hashable, Sendable {
     var oldestSeq: Int?
     var mediaCacheBytes: Int
     var backfill: BackfillStatus
+}
+
+/// What `POST /v1/admin/reload` did to the gateway's Telegram session.
+enum TelegramReload: String, LenientStringEnum, Hashable {
+    /// It was off (no key) and is now started.
+    case started
+    /// It was running and was recreated with the new configuration.
+    case restarted
+    /// Nothing relevant changed.
+    case unchanged
+    /// The configuration the gateway read has no Telegram key, so Telegram stays off.
+    case disabled
+    case unknown
+}
+
+/// `POST /v1/admin/reload`: the gateway re-read `config.json`.
+struct ReloadResult: Decodable, Hashable, Sendable {
+    var telegram: TelegramReload
+    /// Settings that only take effect after a full restart of the gateway (for example `port`).
+    var restartRequired: [String]
+
+    init(telegram: TelegramReload, restartRequired: [String] = []) {
+        self.telegram = telegram
+        self.restartRequired = restartRequired
+    }
+
+    private enum CodingKeys: String, CodingKey { case telegram, restartRequired }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        telegram = try container.decodeIfPresent(TelegramReload.self, forKey: .telegram) ?? .unknown
+        restartRequired = try container.decodeIfPresent([String].self, forKey: .restartRequired) ?? []
+    }
 }
 
 // MARK: - Login
@@ -580,8 +618,25 @@ enum APIClientError: Error, LocalizedError, Sendable {
         return nil
     }
 
+    var httpStatus: Int? {
+        switch self {
+        case .api(_, let status, _): status
+        case .unexpectedStatus(let status): status
+        default: nil
+        }
+    }
+
     var isUnreachable: Bool {
         if case .unreachable = self { return true }
         return false
+    }
+
+    /// The gateway does not have this endpoint (an older gateway): HTTP 404.
+    var isMissingEndpoint: Bool {
+        switch self {
+        case .api(_, let status, _): status == 404
+        case .unexpectedStatus(let status): status == 404
+        default: false
+        }
     }
 }

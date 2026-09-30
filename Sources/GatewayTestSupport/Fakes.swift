@@ -1,5 +1,6 @@
 import Foundation
 import GatewayCore
+import Synchronization
 import TDLibClient
 
 /// Records webhook POSTs and answers with scripted statuses (or errors).
@@ -72,8 +73,57 @@ public actor FakeWebhookClient: WebhookHTTPClient {
     }
 }
 
-/// A Telegram control whose state a test sets directly.
-public actor FakeTelegram: TelegramControl {
+/// Counts fake sessions that are started and not yet shut down, so a test can assert that
+/// two never exist at once.
+public final class FakeSessionLedger: Sendable {
+    private struct State {
+        var live = 0
+        var maxLive = 0
+        var created: [TelegramCredentials] = []
+        var sessions: [FakeTelegram] = []
+    }
+
+    private let state = Mutex(State())
+
+    public init() {}
+
+    public var live: Int { state.withLock { $0.live } }
+    public var maxLive: Int { state.withLock { $0.maxLive } }
+    public var created: [TelegramCredentials] { state.withLock { $0.created } }
+    public var sessions: [FakeTelegram] { state.withLock { $0.sessions } }
+
+    /// A factory for `TelegramHost` that makes `FakeTelegram` sessions waiting for a login.
+    public func factory(tdlib: (any TDLibRequesting)? = nil) -> TelegramHost.Factory {
+        { credentials in
+            let session = FakeTelegram(state: nil, tdlib: tdlib, ledger: self)
+            self.state.withLock {
+                $0.created.append(credentials)
+                $0.sessions.append(session)
+            }
+            return session
+        }
+    }
+
+    func started() {
+        state.withLock {
+            $0.live += 1
+            $0.maxLive = max($0.maxLive, $0.live)
+        }
+    }
+
+    func stopped() {
+        state.withLock { $0.live -= 1 }
+    }
+}
+
+/// A Telegram control whose state a test sets directly. Also a `ManagedTelegramSession`, so
+/// `TelegramHost` can start and stop it.
+public actor FakeTelegram: ManagedTelegramSession {
+    public nonisolated let updates: AsyncStream<JSONBox>
+    private let emit: AsyncStream<JSONBox>.Continuation
+    private let ledger: FakeSessionLedger?
+    /// What `shutdown()` reports; false simulates a TDLib that does not close.
+    public var closesCleanly = true
     public var state: AuthState?
     public var connection: ConnectionState = .ready
     public var link: String?
@@ -81,9 +131,36 @@ public actor FakeTelegram: TelegramControl {
     public var tdlib: (any TDLibRequesting)?
     public private(set) var calls: [String] = []
 
-    public init(state: AuthState? = .ready, tdlib: (any TDLibRequesting)? = nil) {
+    public init(state: AuthState? = .ready, tdlib: (any TDLibRequesting)? = nil, ledger: FakeSessionLedger? = nil) {
         self.state = state
         self.tdlib = tdlib
+        self.ledger = ledger
+        (updates, emit) = AsyncStream.makeStream(of: JSONBox.self, bufferingPolicy: .unbounded)
+    }
+
+    public func start() {
+        calls.append("start")
+        ledger?.started()
+        if state == nil { state = .waitPhoneNumber }
+    }
+
+    public func shutdown() -> Bool {
+        calls.append("shutdown")
+        guard closesCleanly else { return false }
+        ledger?.stopped()
+        state = .closed
+        emit.finish()
+        return true
+    }
+
+    public func set(closesCleanly: Bool) { self.closesCleanly = closesCleanly }
+
+    /// Pushes an update as TDLib would.
+    public func push(_ update: JSONBox) { emit.yield(update) }
+
+    public func request(_ request: JSONBox) async throws -> JSONBox {
+        guard let tdlib else { throw TDLibError(code: 500, message: "FakeTelegram has no TDLib") }
+        return try await tdlib.request(request)
     }
 
     public func set(state: AuthState?) { self.state = state }

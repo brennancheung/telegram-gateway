@@ -73,6 +73,38 @@ struct DecodingTests {
         #expect(status.eventsLastHour == 37)
     }
 
+    @Test("POST /v1/admin/reload")
+    func reload() throws {
+        let started = try decode(ReloadResult.self, """
+        { "reloaded": true, "telegram": "started", "restart_required": [] }
+        """)
+        #expect(started.telegram == .started)
+        #expect(started.restartRequired.isEmpty)
+        let needsRestart = try decode(ReloadResult.self, """
+        { "reloaded": true, "telegram": "unchanged", "restart_required": ["port"] }
+        """)
+        #expect(needsRestart.telegram == .unchanged)
+        #expect(needsRestart.restartRequired == ["port"])
+        let disabled = try decode(ReloadResult.self, """
+        { "reloaded": true, "telegram": "disabled" }
+        """)
+        #expect(disabled.telegram == .disabled)
+        #expect(disabled.restartRequired.isEmpty)
+        // A value this version does not know, and a body without the field, do not fail.
+        #expect(try decode(ReloadResult.self, #"{ "telegram": "paused" }"#).telegram == .unknown)
+        #expect(try decode(ReloadResult.self, "{}").telegram == .unknown)
+        // An older gateway answers 404, which the app treats as "no such endpoint".
+        let notFound = APIClientError.api(APIError(code: "not_found", message: "Unknown route.", details: [:]), status: 404, passwordHint: nil)
+        #expect(notFound.isMissingEndpoint)
+        #expect(APIClientError.unexpectedStatus(404).isMissingEndpoint)
+        #expect(!APIClientError.unexpectedStatus(500).isMissingEndpoint)
+        #expect(!APIClientError.noToken.isMissingEndpoint)
+        #expect(AuthState.waitPhoneNumber.isTelegramRunning)
+        #expect(AuthState.ready.isTelegramRunning)
+        #expect(!AuthState.unknown.isTelegramRunning)
+        #expect(!AuthState.closed.isTelegramRunning)
+    }
+
     @Test("GET /v1/admin/auth in every state")
     func authInfo() throws {
         let qr = try decode(AuthInfo.self, """

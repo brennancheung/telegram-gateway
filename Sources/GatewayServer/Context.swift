@@ -18,6 +18,8 @@ public struct Dependencies: Sendable {
     public var mediaCache: MediaCache
     public var dispatcher: WebhookDispatcher?
     public var telegram: any TelegramControl
+    /// Re-reads config.json (`POST /v1/admin/reload`); nil where reloading is not available.
+    public var reloader: ConfigReloader?
     public var rateLimiter: RateLimiter
     public var clock: any GatewayClock
     public var config: Config
@@ -29,7 +31,7 @@ public struct Dependencies: Sendable {
     public init(
         store: Store, eventLog: EventLog, grants: Grants, accessRequests: AccessRequests, monitor: Monitor,
         translator: Translator, mediaCache: MediaCache, dispatcher: WebhookDispatcher?, telegram: any TelegramControl,
-        rateLimiter: RateLimiter, clock: any GatewayClock, config: Config, shutdown: ShutdownSignal = ShutdownSignal(),
+        reloader: ConfigReloader? = nil, rateLimiter: RateLimiter, clock: any GatewayClock, config: Config, shutdown: ShutdownSignal = ShutdownSignal(),
         startedAt: Date, version: String = "0.1.0", logger: Logger = Logger(label: "server")
     ) {
         self.store = store
@@ -41,6 +43,7 @@ public struct Dependencies: Sendable {
         self.mediaCache = mediaCache
         self.dispatcher = dispatcher
         self.telegram = telegram
+        self.reloader = reloader
         self.rateLimiter = rateLimiter
         self.clock = clock
         self.config = config

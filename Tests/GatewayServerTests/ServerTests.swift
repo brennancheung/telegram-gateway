@@ -522,3 +522,99 @@ extension TestClientProtocol {
         }
     }
 }
+
+@Suite struct ReloadRouteTests {
+    /// The server with a `TelegramHost` over fake sessions and a real config.json in a
+    /// temporary data directory.
+    struct Harness {
+        let home: URL
+        let paths: Paths
+        let ledger = FakeSessionLedger()
+        let host: TelegramHost
+        let application: Application<RouterResponder<GatewayRequestContext>>
+        let deps: Dependencies
+
+        init() async throws {
+            home = FileManager.default.temporaryDirectory.appending(path: "tgw-reload-route-\(UUID().uuidString)")
+            paths = Paths(home: home)
+            try paths.prepare()
+            let store = try Store.inMemory()
+            let clock = ManualClock()
+            let host = TelegramHost(factory: ledger.factory())
+            self.host = host
+            let translator = Translator(tdlib: host)
+            let eventLog = EventLog(store: store, clock: clock)
+            let grants = Grants(store: store, adminToken: App.adminToken, clock: clock)
+            let monitor = Monitor(store: store, eventLog: eventLog, translator: translator, tdlib: host, clock: clock)
+            var logger = Logger(label: "test")
+            logger.logLevel = .error
+            deps = Dependencies(
+                store: store, eventLog: eventLog, grants: grants, accessRequests: AccessRequests(store: store, grants: grants, clock: clock),
+                monitor: monitor, translator: translator, mediaCache: MediaCache(store: store, tdlib: host, maxBytes: 1 << 20, clock: clock),
+                dispatcher: nil, telegram: host, reloader: ConfigReloader(paths: paths, running: Config(), host: host, environment: [:]),
+                rateLimiter: RateLimiter(clock: clock), clock: clock, config: Config(), startedAt: clock.now, logger: logger
+            )
+            application = GatewayServer.buildApplication(deps: deps, port: 0, logger: logger)
+        }
+
+        func write(_ config: String) throws {
+            try Data(config.utf8).write(to: paths.config)
+        }
+    }
+
+    @Test func credentialsSavedWhileRunningTakeEffectOnReload() async throws {
+        let h = try await Harness()
+        defer { try? FileManager.default.removeItem(at: h.home) }
+        let (_, appToken) = try await { () async throws -> (Grant, String) in
+            let issued = try await h.deps.grants.create(name: "A", description: "D", scopes: [.chatsRead], chats: .list([1]), webhookUrl: nil)
+            return (issued.grant, issued.token)
+        }()
+        _ = try await h.deps.eventLog.headSeq()
+        try await h.application.test(.router) { client in
+            // Started without credentials: Telegram is disabled.
+            #expect(try await client.call(.get, "/v1/health").json["tdlib"]?["auth_state"] == "unknown")
+            #expect(try await client.call(.post, "/v1/admin/auth/qr", token: App.adminToken).status == 503)
+            #expect(try await client.call(.post, "/v1/admin/reload", token: App.adminToken).json == ["reloaded": true, "telegram": "disabled", "restart_required": []])
+
+            // The app saves the credentials, then asks for a reload.
+            try h.write(#"{"api_id": 12345, "api_hash": "aaaa"}"#)
+            let started = try await client.call(.post, "/v1/admin/reload", token: App.adminToken)
+            #expect(started.status == 200 && started.json == ["reloaded": true, "telegram": "started", "restart_required": []])
+            #expect(try await client.call(.get, "/v1/health").json["tdlib"]?["auth_state"] == "wait_phone_number")
+            #expect(try await client.call(.post, "/v1/admin/auth/qr", token: App.adminToken).json["auth_state"] == "wait_qr_confirmation")
+
+            // Nothing changed.
+            #expect(try await client.call(.post, "/v1/admin/reload", token: App.adminToken).json["telegram"] == "unchanged")
+            #expect(h.ledger.created.count == 1)
+
+            // New credentials and a new port: the session is replaced, the port waits for a restart.
+            try h.write(#"{"api_id": 12345, "api_hash": "bbbb", "port": 5000}"#)
+            let restarted = try await client.call(.post, "/v1/admin/reload", token: App.adminToken)
+            #expect(restarted.json == ["reloaded": true, "telegram": "restarted", "restart_required": ["port"]])
+            #expect(h.ledger.created.count == 2 && h.ledger.live == 1 && h.ledger.maxLive == 1)
+            #expect(try await client.call(.get, "/v1/admin/auth", token: App.adminToken).json["auth_state"] == "wait_phone_number")
+
+            // Credentials removed.
+            try h.write(#"{"port": 5000}"#)
+            #expect(try await client.call(.post, "/v1/admin/reload", token: App.adminToken).json["telegram"] == "disabled")
+            #expect(h.ledger.live == 0)
+
+            // Errors: app tokens may not reload; a broken config.json changes nothing.
+            let forbidden = try await client.call(.post, "/v1/admin/reload", token: appToken)
+            #expect(forbidden.status == 403 && forbidden.code == "admin_only")
+            try h.write("{ not json")
+            let broken = try await client.call(.post, "/v1/admin/reload", token: App.adminToken)
+            #expect(broken.status == 400 && broken.code == "invalid_request" && broken.json["error"]?["details"]?["field"] == "config.json")
+            // Grants and the event log were never touched.
+            #expect(try await client.call(.get, "/v1/me", token: appToken).status == 200)
+        }
+    }
+
+    @Test func reloadIsNotFoundWhereItIsNotWired() async throws {
+        let app = try await App()
+        try await app.application.test(.router) { client in
+            let reply = try await client.call(.post, "/v1/admin/reload", token: App.adminToken)
+            #expect(reply.status == 404)
+        }
+    }
+}

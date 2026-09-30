@@ -9,6 +9,9 @@ protocol APIClient: Sendable {
     func health() async throws -> Health
     /// `GET /v1/admin/status`.
     func adminStatus() async throws -> AdminStatus
+    /// `POST /v1/admin/reload`: the gateway re-reads `config.json` and starts or recreates its
+    /// Telegram session in place. An older gateway answers 404.
+    func reload() async throws -> ReloadResult
 
     // Login (docs/api.md "Admin: login")
     /// `GET /v1/admin/auth`.

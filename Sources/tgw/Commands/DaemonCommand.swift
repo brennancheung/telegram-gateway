@@ -8,7 +8,7 @@ struct DaemonCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "daemon",
         abstract: "Install, remove or inspect the launchd agent that keeps the daemon running.",
-        subcommands: [Install.self, Uninstall.self, Status.self, Logs.self]
+        subcommands: [Install.self, Uninstall.self, Status.self, Reload.self, Restart.self, Logs.self]
     )
 
     static let label = "local.telegram-gateway"
@@ -123,6 +123,38 @@ struct DaemonCommand: AsyncParsableCommand {
                 print("no LaunchAgent plist at \(plist.path)")
             }
             print("daemon stopped; data in \(Paths.resolve().home.path) is untouched")
+        }
+    }
+
+    struct Reload: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Make the running gateway re-read config.json (POST /v1/admin/reload).",
+            discussion: "Changes to api_id / api_hash take effect at once, however the gateway was started. Other settings (port, …) need `tgw daemon restart`."
+        )
+
+        @OptionGroup var output: OutputOptions
+
+        func run() async throws {
+            let client = try Admin.client()
+            let json = try Admin.check(try await client.post("/v1/admin/reload"))
+            if output.json { print(json.pretty()); return }
+            print("reloaded  telegram \(json["telegram"]?.stringValue ?? "?")")
+            let restart = (json["restart_required"]?.arrayValue ?? []).compactMap(\.stringValue)
+            if !restart.isEmpty {
+                print("restart   needed for: \(restart.joined(separator: ", ")) (`tgw daemon restart`)")
+            }
+        }
+    }
+
+    struct Restart: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Restart the gateway installed by `tgw daemon install` (launchctl kickstart -k).",
+            discussion: "Applies every setting in config.json. A gateway started another way (the menu bar app, a terminal) is not affected; restart it there."
+        )
+
+        func run() async throws {
+            try DaemonCommand.launchctl(["kickstart", "-k", "\(DaemonCommand.domain)/\(DaemonCommand.label)"])
+            print("restarted \(DaemonCommand.label)")
         }
     }
 

@@ -50,8 +50,13 @@ Use your own pair. Reusing another program's key is a known way to get an accoun
 The window shows **Connect to Telegram** with two fields, **API ID** and **API hash**, and a
 link to my.telegram.org. Paste both values and click **Continue**.
 
-Continue saves the key and starts the gateway. You do not choose how it is started; see
+Continue saves the key and makes the gateway use it. If a gateway is already running — for
+example one you installed from the command line with `tgw daemon install` — it is told to
+reload its settings; otherwise the menu bar app starts one. You do not choose how; see
 [How the gateway is started and kept running](#how-the-gateway-is-started-and-kept-running).
+The window moves on to sign-in only once Telegram is actually running in the gateway, which
+takes a few seconds.
+
 macOS may show a notification that Telegram Gateway added an item that can run in the
 background. That is the gateway; setup continues without waiting for you to act on it.
 
@@ -60,8 +65,9 @@ If it goes wrong:
 - **A red line under a field** means the value cannot be right: the API ID must be a number,
   and the API hash must be exactly 32 characters.
 - **A red card "The gateway didn't start"** gives the reason in one line and a **Show log**
-  link. The button becomes **Try again**. The usual reasons are in
-  [Troubleshooting](#troubleshooting).
+  link. The button becomes **Try again**. The card also appears when the gateway itself is
+  running but Telegram did not start in it, because signing in would not work then. The
+  usual reasons are in [Troubleshooting](#troubleshooting).
 
 ### Step 2: Sign in
 
@@ -117,7 +123,8 @@ Click the paper-plane icon in the menu bar. From top to bottom:
   gateway", "Choose chats to monitor"). Clicking a row opens the window at the place where
   you deal with it.
 - **Open Telegram Gateway…** opens the window (or brings it to the front).
-- **Restart gateway** restarts the background service.
+- **Restart gateway** restarts the gateway, whichever way it was started, and waits for it
+  to answer again.
 - **Quit** quits the menu bar app. The line beneath says whether the gateway keeps running
   (the normal case) or stops too (see [the in-app fallback](#in-plain-terms)).
 
@@ -242,7 +249,9 @@ Everything about how the gateway itself runs. No other screen shows any of this.
 - **Gateway**: whether it is running, its local address (`127.0.0.1:41414` by default), its
   version, when it started and for how long it has been up, and whether it starts at login.
 - **Controls**:
-  - **Restart** restarts the gateway.
+  - **Restart** restarts the gateway that is running: the one inside the menu bar app, the
+    one the menu bar app registered to start at login, or one installed from the command line
+    with `tgw daemon install`. If there is none, it says so.
   - **Start at login** — **Turn on** registers the gateway with macOS so it starts when you
     log in and keeps running after the menu bar app quits. **Turn off** stops it and removes
     the registration.
@@ -256,8 +265,8 @@ Everything about how the gateway itself runs. No other screen shows any of this.
   - Signing out ends the Telegram session on this Mac. Your monitored chats, the apps you
     approved and the messages already collected are kept; nothing new arrives until you sign
     in again.
-  - Edit… reopens step 1 so you can paste a different key. Continue restarts the gateway
-    with it.
+  - Edit… reopens step 1 so you can paste a different key. Continue makes the running
+    gateway reload it, and returns here once Telegram is up with the new key.
 - **Files**: where the gateway program, its settings file and its log are.
 
 ---
@@ -279,6 +288,11 @@ for you and you never have to choose how.
   A gateway run this way stops when you quit the menu bar app. The **Gateway** section shows
   which way is in use ("Starts at login: Yes", "No, runs inside this app", or "Waiting for
   your approval") and has the switch to change it.
+
+A gateway you installed yourself from the command line (`tgw daemon install`, see
+[development.md](development.md)) is a login item too, under its own name. The menu bar app
+works with it as it is: it does not start a second gateway, Continue asks it to reload its
+settings, and Restart gateway restarts it.
 
 To move from the fallback to the normal way: allow Telegram Gateway in System Settings
 (**Allow at login → Open settings**), then in the Gateway section click **Run inside this app
@@ -303,24 +317,45 @@ user. The menu bar app carries one inside its bundle and registers it with Apple
 
 What **Continue**, **Start gateway** and **Try again** do:
 
-1. If the gateway already answers on its port, restart it so it rereads the key
-   (`launchctl kickstart -k gui/<uid>/local.telegram-gateway.daemon`).
-2. Otherwise register the LaunchAgent and wait up to 8s for the gateway to answer
-   `GET /v1/health`.
-3. If it does not answer — macOS wants approval first, registration failed, or the gateway
-   stayed silent — run it as a child process of the menu bar app and wait up to 8s again. A
-   registered agent that stayed silent is unregistered first, so only one gateway ever runs.
-   The child's output goes to `~/Library/Logs/TelegramGateway/daemon-foreground.log`.
-4. If that fails too, show "The gateway didn't start" with the last line of the log, or "It
-   didn't answer on port 41414."
+1. **If a gateway already answers on its port**, ask it to reload: `POST /v1/admin/reload`.
+   The gateway reads `config.json` again and starts, or recreates, its Telegram session in
+   place, without restarting. It does not matter who started that gateway.
+   - If the reload reports that Telegram is still disabled, the gateway read a configuration
+     without a key: show the failure with that reason.
+   - If the gateway is too old to have the endpoint (it answers 404), or reports that a
+     setting needs a full restart (`restart_required`, for example a changed `port`), restart
+     it as described under "Restart gateway" below and wait up to 8s for it to answer again.
+2. **Otherwise start one.** Register the LaunchAgent and wait up to 8s for the gateway to
+   answer `GET /v1/health`. If it does not — macOS wants approval first, registration failed,
+   or the gateway stayed silent — run it as a child process of the menu bar app and wait up
+   to 8s again. A registered agent that stayed silent is unregistered first, so only one
+   gateway ever runs. The child's output goes to
+   `~/Library/Logs/TelegramGateway/daemon-foreground.log`.
+3. **Wait for Telegram.** A gateway that answers is not enough. For up to 8s, wait until
+   `tdlib.auth_state` in `GET /v1/health` is something other than `unknown` (which is what a
+   gateway without a Telegram session reports). Only then does setup move on to sign-in.
+4. If any of this fails, show "The gateway didn't start" with the reason: the last line of
+   the log, "It didn't answer on port 41414.", "The gateway is running without the Telegram
+   key…", or "The gateway is running, but Telegram didn't start in it."
+
+What **Restart gateway** does: it restarts whichever gateway is running and then waits for it
+to answer.
+
+1. The child process, if the menu bar app is running the gateway itself: stop it and start
+   it again.
+2. Otherwise the menu bar app's own LaunchAgent, if it is registered:
+   `launchctl kickstart -k gui/<uid>/local.telegram-gateway.daemon`.
+3. Otherwise the LaunchAgent that `tgw daemon install` registers:
+   `launchctl kickstart -k gui/<uid>/local.telegram-gateway`.
+4. If none of these exists: "No running gateway was found to restart."
 
 | You do | The menu bar app does | launchd does |
 |---|---|---|
-| Continue, Start gateway, Try again | the four steps above | loads the agent and runs it now and at every login |
+| Continue, Start gateway, Try again | reloads a running gateway, or starts one as above | for a new registration: loads the agent and runs it now and at every login |
 | Start at login → Turn on | writes `daemon_path`, registers the agent | the same |
 | Start at login → Turn off | unregisters the agent | stops the gateway and forgets the agent |
 | Run inside this app → Run / Stop | starts or stops a child process | nothing |
-| Restart gateway | `launchctl kickstart -k`, or restarts the child | restarts the gateway |
+| Restart gateway | restarts the child, or `launchctl kickstart -k` for the registered label | restarts the gateway |
 | Quit | quits, stopping a child-process gateway | nothing: a registered gateway keeps running |
 
 The menu bar app talks to the gateway over its local HTTP API ([api.md](api.md)) with the
@@ -348,6 +383,24 @@ how it is every few seconds and got no answer.
   after starting; the log says why.
 - Gateway shows "Starts at login: Needs setting up again": the menu bar app was moved since
   it registered the gateway. Click **Start at login → Turn on**.
+
+**"The gateway is running, but Telegram didn't start in it".** The gateway answers, but its
+Telegram connection stayed off after it was given the key.
+
+- **Show log**: the gateway logs why its Telegram session could not start.
+- **Try again** repeats the reload. If it keeps failing, **Restart gateway** (in the popover)
+  starts the gateway afresh.
+
+**"The gateway is running without the Telegram key".** The gateway that answered read a
+settings file with no API ID and hash in it, although you just saved them. It is probably
+using a different data directory than the menu bar app: a gateway started with `TGW_HOME` or
+`--home` reads `config.json` there. Start the gateway without that setting, or launch the
+menu bar app with the same `TGW_HOME`.
+
+**"No running gateway was found to restart".** Restart gateway looks for the gateway inside
+the menu bar app, then the one it registered to start at login, then one installed with
+`tgw daemon install`. A gateway started by hand in a terminal is none of these; stop it there
+and start it again.
 
 **"Can't control the gateway".** The gateway is running but the menu bar app cannot read its
 access key (the admin token in `secrets.json`).
@@ -448,8 +501,10 @@ Every call the menu bar app makes to the gateway goes through the `APIClient` pr
   the admin token read on every request.
 - `FakeAPIClient` is an in-memory gateway with the same behaviour where it matters: the
   sign-in state machine (QR, phone, code, password), chats and folders, the monitored set,
-  requests turning into grants, revocation, a paused delivery. It starts in a named
-  `Scenario` (`.loggedOut`, `.waitingForQR`, `.loggedIn`, `.reconnecting`, `.unreachable`, …).
+  requests turning into grants, revocation, a paused delivery, and reloading its
+  configuration (including a gateway without the endpoint). It starts in a named `Scenario`
+  (`.loggedOut`, `.waitingForQR`, `.loggedIn`, `.reconnecting`, `.telegramDisabled`,
+  `.unreachable`, …).
 
 `AppModel.preview(_:)` builds a model over the fake. Previews, unit tests and snapshots all
 use it, so none of them needs a gateway, reads `secrets.json`, registers anything with

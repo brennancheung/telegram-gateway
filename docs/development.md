@@ -99,8 +99,10 @@ Put them in `config.json` in the data directory:
 {"api_id": 12345, "api_hash": "0123abcd…"}
 ```
 
-The menu bar app asks for them during setup and writes this file for you. Never commit these
-values, and never use another program's pair.
+The menu bar app asks for them during setup and writes this file for you. A gateway that is
+already running picks them up on `tgw daemon reload` (or `POST /v1/admin/reload`), whichever
+way it was started; the app does this itself after saving. Never commit these values, and
+never use another program's pair.
 
 ## Run the gateway
 
@@ -146,9 +148,17 @@ launchd   state = running, pid = 61192
 lock      held by pid 61192 (daemon)
 health    ok auth=ready head_seq=4812 on port 41414
 
+$ tgw daemon reload            # re-read config.json: api_id / api_hash take effect now
+reloaded  telegram started
+$ tgw daemon restart           # launchctl kickstart: applies every setting, including port
+restarted local.telegram-gateway
 $ tgw daemon logs -n 50        # add -f to follow
 $ tgw daemon uninstall         # stops the gateway and removes the plist; data is kept
 ```
+
+`tgw daemon restart` only knows the agent that `tgw daemon install` created. A gateway
+started by the menu bar app or in a terminal is restarted there; `reload` works for all of
+them.
 
 Rebuilding in place is fine; stop and start the agent to pick up the new binary. If you move
 the binary, install again. The menu bar app can also run the gateway, through its own
@@ -199,6 +209,12 @@ Environment variables, read by the gateway and by `tgw`:
 | `--port <n>` | The port, like `TGW_PORT`. |
 
 Flags win over environment variables, which win over the file.
+
+Changes to `api_id` and `api_hash` take effect on reload: `tgw daemon reload` (or
+`POST /v1/admin/reload` with the admin token) makes the running gateway re-read
+`config.json` and start, replace or drop its Telegram session in place, without touching the
+event log, grants or open connections. Every other key needs a restart; the reload response
+lists the ones that changed under `restart_required`.
 
 ## Where data lives
 
@@ -369,7 +385,7 @@ HTTP.
 
 ### `tgw daemon`
 
-`install`, `uninstall`, `status` and `logs`, described under
+`install`, `uninstall`, `status`, `reload`, `restart` and `logs`, described under
 [As a LaunchAgent](#as-a-launchagent).
 
 ### `tgw secrets`
@@ -463,7 +479,8 @@ webhook body byte-exact for signing.
   `"secrets": "keychain"` and the binary is ad-hoc signed. Remove the key to use the file
   store; see [Secrets](#secrets).
 - **`503 not_logged_in` from history, media or the chat list** — no `api_id`/`api_hash`, or
-  not logged in yet. `tgw health` shows `auth=…`.
+  not logged in yet. `tgw health` shows `auth=…`. If you just added the credentials to
+  `config.json`, run `tgw daemon reload`.
 - **A WebSocket client sees the connection close instead of an HTTP 401** — by design: the
   stream endpoint always accepts the upgrade and reports a bad token with an error frame and
   close code `4401` ([api.md](api.md)).

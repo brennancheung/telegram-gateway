@@ -65,6 +65,16 @@ final class DaemonManager {
     /// `Label` is the same string without `.plist`.
     static let agentLabel = "local.telegram-gateway.daemon"
     static let agentPlistName = agentLabel + ".plist"
+    /// The label under which `tgw daemon install` registers the gateway, when it was installed
+    /// from the command line rather than by this app.
+    static let commandLineAgentLabel = "local.telegram-gateway"
+
+    /// Which running gateway a restart acted on.
+    enum RestartTarget: Equatable, Sendable {
+        case child
+        case appAgent
+        case commandLineAgent
+    }
 
     /// Whether macOS starts the gateway at login (what `SMAppService` reports).
     enum AgentState: Equatable, Sendable {
@@ -96,6 +106,12 @@ final class DaemonManager {
     private(set) var foreground: ForegroundState = .stopped
     private(set) var lastError: String?
     private(set) var resolution = DaemonLocator.Resolution(candidates: [])
+    /// Every restart performed, newest last.
+    private(set) var restarts: [RestartTarget] = []
+    /// Previews and tests only: whether a gateway installed by `tgw` exists, and what a
+    /// restart does to the fake gateway.
+    var previewCommandLineAgentInstalled = true
+    var previewRestartHook: (@MainActor () async -> Void)?
     /// The child process when the gateway runs inside the app.
     private var child: Process?
     private let previewMode: Bool
@@ -168,31 +184,64 @@ final class DaemonManager {
         SMAppService.openSystemSettingsLoginItems()
     }
 
-    /// `launchctl kickstart -k` for the registered gateway, or stop and start the child.
-    func restart(config: GatewayConfig) {
+    /// Restarts whichever gateway is actually running: the child process when this app runs
+    /// it; otherwise the app's own LaunchAgent when it is registered; otherwise the LaunchAgent
+    /// that `tgw daemon install` registered. Sets `lastError` when there is none of them.
+    func restart(config: GatewayConfig) async {
         lastError = nil
         if isForegroundRunning {
-            stopForeground()
-            runInForeground(config: config)
+            restarts.append(.child)
+            if previewMode {
+                await previewRestartHook?()
+            } else {
+                stopForeground()
+                runInForeground(config: config)
+            }
             return
         }
-        guard !previewMode else { return }
-        let target = "gui/\(getuid())/\(Self.agentLabel)"
+        if previewMode {
+            if agentState == .enabled {
+                restarts.append(.appAgent)
+            } else if previewCommandLineAgentInstalled {
+                restarts.append(.commandLineAgent)
+            } else {
+                lastError = Self.nothingToRestart
+                return
+            }
+            await previewRestartHook?()
+            return
+        }
+        refreshAgentState()
+        if agentState == .enabled, kickstart(Self.agentLabel) == nil {
+            restarts.append(.appAgent)
+            return
+        }
+        if let failure = kickstart(Self.commandLineAgentLabel) {
+            lastError = failure.isEmpty ? Self.nothingToRestart : "\(Self.nothingToRestart) (\(failure))"
+        } else {
+            restarts.append(.commandLineAgent)
+        }
+    }
+
+    private static let nothingToRestart = "No running gateway was found to restart."
+
+    /// `launchctl kickstart -k gui/<uid>/<label>`: nil when it worked, launchctl's message
+    /// (possibly empty) when it did not, which is what happens for a label that is not loaded.
+    private func kickstart(_ label: String) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["kickstart", "-k", target]
+        process.arguments = ["kickstart", "-k", "gui/\(getuid())/\(label)"]
         let pipe = Pipe()
         process.standardError = pipe
         process.standardOutput = pipe
         do {
             try process.run()
             process.waitUntilExit()
-            if process.terminationStatus != 0 {
-                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                lastError = "Couldn't restart the gateway: \(output.trimmingCharacters(in: .whitespacesAndNewlines))"
-            }
+            guard process.terminationStatus != 0 else { return nil }
+            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            return output.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
-            lastError = "Couldn't restart the gateway: \(error.localizedDescription)"
+            return error.localizedDescription
         }
     }
 
@@ -238,6 +287,7 @@ final class DaemonManager {
     }
 
     func stopForeground() {
+        if previewMode { foreground = .stopped }
         guard let child else { return }
         child.terminationHandler = nil
         if child.isRunning { child.terminate() }

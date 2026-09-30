@@ -27,6 +27,10 @@ final class HTTPAPIClient: APIClient {
         try await get("/v1/admin/status")
     }
 
+    func reload() async throws -> ReloadResult {
+        try await decode(try await request("POST", "/v1/admin/reload", body: nil))
+    }
+
     // MARK: Login
 
     func auth() async throws -> AuthInfo {

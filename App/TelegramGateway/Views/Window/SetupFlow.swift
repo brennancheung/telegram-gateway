@@ -72,7 +72,7 @@ struct ConnectStep: View {
                 }
                 Spacer()
                 if model.editingKey {
-                    Button("Cancel") { model.editingKey = false }
+                    Button("Cancel") { model.cancelConnect() }
                         .keyboardShortcut(.cancelAction)
                 }
                 Button(isFailed ? "Try again" : "Continue", action: submit)
@@ -393,14 +393,20 @@ struct LoginStep: View {
         }
     }
 
+    /// Why the last attempt to bring Telegram up failed, if one was made.
+    private var stuckReason: String? {
+        if case .failed(let reason) = model.startPhase { return reason }
+        return nil
+    }
+
     private var stuckStep: some View {
         LoginForm(
-            title: "Telegram isn't responding",
-            sentence: "Restarting the gateway reconnects it.",
+            title: "Telegram isn't running in the gateway",
+            sentence: stuckReason ?? "The gateway has not started its Telegram connection.",
             hint: nil,
-            button: "Restart gateway",
-            canSubmit: true,
-            submit: { model.restartGateway() },
+            button: model.startPhase == .starting ? "Starting…" : "Try again",
+            canSubmit: model.startPhase != .starting,
+            submit: { model.reviveTelegram() },
             back: nil
         ) {
             EmptyView()

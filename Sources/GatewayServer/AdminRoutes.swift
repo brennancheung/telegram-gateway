@@ -11,6 +11,7 @@ struct AdminRoutes {
 
     func register(on group: RouterGroup<GatewayRequestContext>) {
         group.get("/status") { _, _ in try await status() }
+        group.post("/reload") { _, _ in try await reload() }
         group.get("/auth") { _, _ in try await auth() }
         group.post("/auth/qr") { _, _ in try await authStep { try await deps.telegram.requestQr() } }
         group.post("/auth/phone") { request, context in
@@ -82,6 +83,15 @@ struct AdminRoutes {
             "media_cache_bytes": .number(Double(try await deps.mediaCache.cachedBytes())),
             "backfill": ["in_progress": .bool(backfill.inProgress), "chats_pending": .number(Double(backfill.chatsPending))],
         ])
+    }
+
+    /// Re-reads config.json and brings the Telegram session in line with it, without
+    /// touching the event log, grants or open connections.
+    func reload() async throws -> Response {
+        guard let reloader = deps.reloader else { throw APIError.notFound }
+        let result = try await reloader.reload()
+        deps.logger.info("reload: telegram \(result.telegram.rawValue), restart required for \(result.restartRequired)")
+        return json(result.json)
     }
 
     func auth() async throws -> Response {

@@ -192,6 +192,9 @@ final class AppModel {
     var startPhase: StartPhase = .idle
     /// The user is changing the Telegram key from the Gateway section.
     var editingKey = false
+    /// Continue was pressed and the gateway has not confirmed Telegram is up yet (or failed
+    /// to): the Connect screen stays, with its progress or its failure card.
+    private(set) var connectPending = false
     /// First-run setup finished (chats chosen or the banner dismissed). Persisted.
     var onboardingDone: Bool {
         didSet { if !isPreview, persistsOnboarding { UserDefaults.standard.set(onboardingDone, forKey: Self.onboardingKey) } }
@@ -285,7 +288,7 @@ final class AppModel {
 
     var screen: Screen {
         guard initialised else { return .loading }
-        if !config.hasCredentials || editingKey { return .connect }
+        if !config.hasCredentials || editingKey || connectPending { return .connect }
         if !reachable { return onboardingDone ? .gatewayDown : .connect }
         guard token != nil else { return .keyMissing }
         guard let health else { return .connect }
@@ -314,7 +317,8 @@ final class AppModel {
             return Headline(tone: .neutral, phrase: "Connecting…")
         case .connect, .gatewayDown:
             if startPhase == .starting { return Headline(tone: .attention, phrase: "Starting the gateway…") }
-            if reachable { return Headline(tone: .neutral, phrase: "Changing the Telegram key") }
+            if case .failed = startPhase, reachable { return Headline(tone: .failed, phrase: "Telegram didn't start") }
+            if editingKey { return Headline(tone: .neutral, phrase: "Changing the Telegram key") }
             if !config.hasCredentials { return Headline(tone: .neutral, phrase: "Not set up yet") }
             return Headline(tone: .failed, phrase: "Gateway not running")
         case .keyMissing:
@@ -517,7 +521,8 @@ final class AppModel {
 
     // MARK: Step 1: connect
 
-    /// "Continue": saves the key, then starts (or restarts) the gateway.
+    /// "Continue": saves the key, then makes the gateway use it. The Connect screen stays up
+    /// until Telegram is actually running in the gateway, or shows why it is not.
     func connect(apiId: Int, apiHash: String) async {
         if !isPreview {
             do {
@@ -525,6 +530,7 @@ final class AppModel {
                 configError = nil
             } catch {
                 configError = error.localizedDescription
+                connectPending = true
                 startPhase = .failed("Couldn't save the key: \(error.localizedDescription)")
                 return
             }
@@ -533,7 +539,16 @@ final class AppModel {
             config.apiHash = apiHash
         }
         editingKey = false
+        connectPending = true
         await startGateway()
+        if startPhase == .idle { connectPending = false }
+    }
+
+    /// Leaves the Connect screen without (another) attempt.
+    func cancelConnect() {
+        editingKey = false
+        connectPending = false
+        if startPhase != .starting { startPhase = .idle }
     }
 
     func reloadConfig() {
@@ -546,31 +561,84 @@ final class AppModel {
         }
     }
 
-    /// Starts the gateway, or restarts it when it is already running so it rereads the key.
-    /// Tries the login-item route first; if that does not bring it up, runs it inside the
-    /// app instead. The user is never asked which.
+    /// Gets a gateway running with the current configuration, and Telegram running inside it.
+    ///
+    /// - A gateway that already answers is asked to reload its configuration in place
+    ///   (`POST /v1/admin/reload`). It may have been started by this app or installed from the
+    ///   command line; either way nothing needs restarting. A gateway too old to have the
+    ///   endpoint, or one that says a full restart is required, is restarted instead.
+    /// - Otherwise the gateway is started: the login-item route first and, if that does not
+    ///   bring it up, inside this app. The user is never asked which.
+    ///
+    /// In both cases the gateway answering is not enough: Telegram must be up in it (its
+    /// `auth_state` has left `unknown`) before this reports success.
     func startGateway() async {
         startPhase = .starting
         daemon.clearError()
         if reachable {
-            daemon.restart(config: config)
-            if !isPreview { try? await Task.sleep(for: .seconds(1)) }
-            if await waitForGateway() { return finishStart() }
+            if let failure = await reloadRunningGateway() { return failStart(failure) }
         } else {
             daemon.register(config: config)
             reloadConfig()
-            if daemon.agentState == .enabled, await waitForGateway() { return finishStart() }
-            // Registered but silent: stop that copy so only one gateway ever runs.
-            if daemon.agentState == .enabled { daemon.unregister() }
-            daemon.runInForeground(config: config)
-            if daemon.isForegroundRunning, await waitForGateway() { return finishStart() }
+            var up = daemon.agentState == .enabled
+            if up { up = await waitForGateway() }
+            if !up {
+                // Registered but silent: stop that copy so only one gateway ever runs.
+                if daemon.agentState == .enabled { daemon.unregister() }
+                daemon.runInForeground(config: config)
+                if daemon.isForegroundRunning { up = await waitForGateway() }
+            }
+            if !up { return failStart(startFailureReason()) }
         }
-        startPhase = .failed(startFailureReason())
-        appLog.error("gateway did not start: \(self.startFailureReason(), privacy: .public)")
+        guard await waitForTelegram() else {
+            return failStart("The gateway is running, but Telegram didn't start in it.\(daemon.lastLogLine().map { " \($0)" } ?? "")")
+        }
+        startPhase = .idle
     }
 
-    private func finishStart() {
-        startPhase = .idle
+    private func failStart(_ reason: String) {
+        startPhase = .failed(reason)
+        appLog.error("gateway did not start: \(reason, privacy: .public)")
+    }
+
+    /// Asks the running gateway to pick up `config.json`. Returns why it could not, or nil.
+    private func reloadRunningGateway() async -> String? {
+        var attempt = 0
+        while true {
+            attempt += 1
+            do {
+                let result = try await client.reload()
+                if result.telegram == .disabled {
+                    return "The gateway is running without the Telegram key. It may be reading a different settings file."
+                }
+                // Some settings (the port) only take effect in a new process.
+                return result.restartRequired.isEmpty ? nil : await restartAndWait()
+            } catch let error as APIClientError where error.isMissingEndpoint {
+                // An older gateway: restarting makes it read the configuration at startup.
+                return await restartAndWait()
+            } catch APIClientError.noToken {
+                // Without the access key the app cannot ask; a restart needs no key.
+                return await restartAndWait()
+            } catch let error as APIClientError where error.apiCode == "reload_in_progress" && attempt < 4 {
+                // Another reload (tgw, or a second click) is running; let it finish.
+                try? await Task.sleep(for: isPreview ? .milliseconds(5) : .milliseconds(500))
+            } catch let error as APIClientError where error.httpStatus == 500 {
+                // The gateway could not replace its Telegram session in place; a new process can.
+                return await restartAndWait()
+            } catch {
+                return (error as? APIClientError)?.errorDescription ?? error.localizedDescription
+            }
+        }
+    }
+
+    /// Restarts whichever gateway is running and waits for it to answer again. Returns why
+    /// that failed, or nil.
+    private func restartAndWait() async -> String? {
+        await daemon.restart(config: config)
+        if let error = daemon.lastError { return error }
+        // Give the old process a moment to go away, so the wait sees the new one.
+        if !isPreview { try? await Task.sleep(for: .seconds(1)) }
+        return await waitForGateway() ? nil : startFailureReason()
     }
 
     private func waitForGateway() async -> Bool {
@@ -578,6 +646,17 @@ final class AppModel {
         repeat {
             await refresh()
             if reachable { return true }
+            try? await Task.sleep(for: isPreview ? .milliseconds(5) : .milliseconds(500))
+        } while ContinuousClock.now < deadline
+        return false
+    }
+
+    /// Waits until the gateway reports a Telegram session (any state but `unknown`/`closed`).
+    private func waitForTelegram() async -> Bool {
+        let deadline = ContinuousClock.now + startTimeout
+        repeat {
+            await refresh()
+            if let health, health.tdlib.authState.isTelegramRunning { return true }
             try? await Task.sleep(for: isPreview ? .milliseconds(5) : .milliseconds(500))
         } while ContinuousClock.now < deadline
         return false
@@ -592,12 +671,23 @@ final class AppModel {
         return "It didn't answer on port \(String(config.baseURL.port ?? GatewayConfig.defaultPort))."
     }
 
+    /// "Restart gateway": restarts whichever gateway is running and waits for it to answer.
+    /// A failure (nothing to restart, or it did not come back) is reported in `lastError`.
     func restartGateway() {
-        Task {
-            daemon.restart(config: config)
-            try? await Task.sleep(for: .seconds(1))
+        Task { await restartGatewayAndWait() }
+    }
+
+    func restartGatewayAndWait() async {
+        if let failure = await restartAndWait() {
             await refresh()
+            lastError = failure
         }
+    }
+
+    /// From the sign-in screen when Telegram is not running in the gateway: reload (or
+    /// restart) it and report the reason if that does not help.
+    func reviveTelegram() {
+        Task { await startGateway() }
     }
 
     // MARK: Step 2: sign in

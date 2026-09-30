@@ -20,7 +20,8 @@ rely on it.
 - **Webhook delivery**: ordered batches, HMAC signatures, the retry schedule, pause and
   resume, recovery of an interrupted delivery after a restart.
 - **Administration** from the menu bar app and from `tgw`: install and inspect the
-  LaunchAgent, change the monitored set, approve, deny and revoke, follow the event stream.
+  LaunchAgent, reload the configuration in place, change the monitored set, approve, deny
+  and revoke, follow the event stream.
 - **Tests**: the suite runs without a Telegram account and without network access, and
   covers everything above, including the translation of each TDLib update into the event
   format in [events.md](events.md).

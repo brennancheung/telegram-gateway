@@ -57,26 +57,19 @@ struct GatewayDaemonCommand: AsyncParsableCommand {
         let clock = SystemClock()
         let startedAt = clock.now
 
-        // TDLib, if this machine has an api_id / api_hash. Without one the daemon still serves
-        // the store-backed API so grants and monitoring can be set up.
-        let session: TelegramSession?
-        let telegram: any TelegramControl
-        let tdlib: any TDLibRequesting
-        if let apiId = config.apiId, let apiHash = config.apiHash, config.hasCredentials {
+        // One stable handle on Telegram. It holds a TDLib session when config.json has an
+        // api_id / api_hash, and none otherwise; `POST /v1/admin/reload` changes that while
+        // the gateway runs. Without a session the store-backed API still works.
+        let host = TelegramHost(logger: Logger(label: "telegram")) { credentials in
             let parameters = TDLibParameters(
-                apiId: apiId, apiHash: apiHash, databaseDirectory: paths.tdlib.path, filesDirectory: paths.tdlibFiles.path,
-                databaseEncryptionKey: try Secrets.databaseKey(secrets), applicationVersion: GatewayDaemonCommand.version
+                apiId: credentials.apiId, apiHash: credentials.apiHash, databaseDirectory: paths.tdlib.path,
+                filesDirectory: paths.tdlibFiles.path, databaseEncryptionKey: try Secrets.databaseKey(secrets),
+                applicationVersion: GatewayDaemonCommand.version
             )
-            let s = TelegramSession(parameters: parameters, logger: Logger(label: "telegram"))
-            session = s
-            telegram = s
-            tdlib = s
-        } else {
-            logger.warning("no api_id / api_hash in \(paths.config.path); Telegram is disabled until they are added and the daemon restarts")
-            session = nil
-            telegram = NoTelegram()
-            tdlib = NoTelegram()
+            return TelegramSession(parameters: parameters, logger: Logger(label: "telegram"))
         }
+        let telegram: any TelegramControl = host
+        let tdlib: any TDLibRequesting = host
 
         let translator = Translator(tdlib: tdlib)
         let eventLog = EventLog(store: store, clock: clock)
@@ -90,11 +83,11 @@ struct GatewayDaemonCommand: AsyncParsableCommand {
 
         try await monitor.load()
         await dispatcher.start()
-        var monitorTask: Task<Void, Never>?
-        if let session {
-            await session.start()
-            monitorTask = Task { await monitor.run(updates: session.updates) }
+        let monitorTask = Task { await monitor.run(updates: host.updates) }
+        if try await host.apply(TelegramCredentials(config: config)) == .disabled {
+            logger.warning("no api_id / api_hash in \(paths.config.path); Telegram is disabled until they are added and the gateway is reloaded (`tgw daemon reload`)")
         }
+        let reloader = ConfigReloader(paths: paths, running: config, host: host)
         let housekeeping = Task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(3600))
@@ -115,7 +108,7 @@ struct GatewayDaemonCommand: AsyncParsableCommand {
         let deps = Dependencies(
             store: store, eventLog: eventLog, grants: grants, accessRequests: accessRequests, monitor: monitor,
             translator: translator, mediaCache: mediaCache, dispatcher: dispatcher, telegram: telegram,
-            rateLimiter: rateLimiter, clock: clock, config: config, shutdown: shutdown, startedAt: startedAt,
+            reloader: reloader, rateLimiter: rateLimiter, clock: clock, config: config, shutdown: shutdown, startedAt: startedAt,
             version: GatewayDaemonCommand.version, logger: Logger(label: "server")
         )
         let app = GatewayServer.buildApplication(deps: deps, port: config.port, logger: Logger(label: "http"))
@@ -136,8 +129,8 @@ struct GatewayDaemonCommand: AsyncParsableCommand {
 
         housekeeping.cancel()
         await dispatcher.shutdown()
-        monitorTask?.cancel()
-        if let session { await session.shutdown() }
+        await host.shutdown()
+        monitorTask.cancel()
         withExtendedLifetime(signals) {}
         logger.info("stopped")
     }

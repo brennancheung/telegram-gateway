@@ -97,7 +97,7 @@ extension TelegramControl {
 /// `online = false` on `ready`, tracks the connection state, and forwards every update to
 /// the monitor through `updates`. After `logOut` TDLib closes; a fresh client is created so
 /// the user can log in again without restarting the daemon.
-public actor TelegramSession: TelegramControl {
+public actor TelegramSession: ManagedTelegramSession {
     public nonisolated let updates: AsyncStream<JSONBox>
     private let forward: AsyncStream<JSONBox>.Continuation
     private let parameters: TDLibParameters
@@ -184,11 +184,20 @@ public actor TelegramSession: TelegramControl {
 
     /// Sends `close` and waits for TDLib to flush (docs/development.md: skipping this risks a
     /// slow recovery on next start).
-    public func shutdown() async {
+    /// Returns whether TDLib confirmed it closed (true when there was no client).
+    @discardableResult
+    public func shutdown() async -> Bool {
         shuttingDown = true
         forward.finish()
-        await client?.close()
+        var closed = true
+        if let client {
+            await client.close()
+            closed = await client.authState == .closed
+        }
         pump?.cancel()
+        client = nil
+        currentAuthState = .closed
+        return closed
     }
 
     // MARK: TelegramControl
@@ -253,7 +262,7 @@ public actor TelegramSession: TelegramControl {
     }
 }
 
-extension TelegramSession: TDLibRequesting {
+extension TelegramSession {
     /// Requests go to the current client; `503 not_logged_in` when there is none.
     public func request(_ request: JSONBox) async throws -> JSONBox {
         guard let client else { throw APIError.notLoggedIn(authState: currentAuthState?.apiName ?? "unknown") }
