@@ -165,6 +165,29 @@ struct AppModelTests {
         #expect(resolution.candidates.contains { $0.source == "app bundle" })
     }
 
+    @Test("Admin token comes from secrets.json; Keychain only when config opts in")
+    func adminTokenFile() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "tgw-secrets-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "secrets.json")
+        #expect(try AdminToken.readFile(at: file) == nil)
+        try Data(#"{"admin-token": " tgw_Kq8sT2xvY9bLm4nR7wZ1aC3dE5fG6hJ0iU2oP4rS8tV\n", "other": 1}"#.utf8).write(to: file)
+        #expect(try AdminToken.readFile(at: file) == "tgw_Kq8sT2xvY9bLm4nR7wZ1aC3dE5fG6hJ0iU2oP4rS8tV")
+        try Data(#"{"other": 1}"#.utf8).write(to: file)
+        #expect(try AdminToken.readFile(at: file) == nil)
+        try Data("[]".utf8).write(to: file)
+        #expect(throws: AdminToken.ReadError.self) { try AdminToken.readFile(at: file) }
+        #expect(GatewayConfig().secretsSource == .file)
+        #expect(GatewayConfig(raw: ["secrets": "keychain"]).secretsSource == .keychain)
+        #expect(GatewayConfig(raw: ["secrets": "vault"]).secretsSource == .file)
+        // The model's file path: TGW_HOME points the read at the scratch directory (no SecItem).
+        setenv("TGW_HOME", directory.path, 1)
+        defer { unsetenv("TGW_HOME") }
+        try Data(#"{"admin-token": "tgw_fromfile"}"#.utf8).write(to: file)
+        #expect(try AdminToken.read(config: GatewayConfig()) == "tgw_fromfile")
+    }
+
     @Test("Credential validation")
     func credentials() {
         #expect(!GatewayConfig(apiId: nil, apiHash: nil).hasCredentials)

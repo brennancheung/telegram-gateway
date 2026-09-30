@@ -2,7 +2,7 @@ import Foundation
 
 /// The real client: JSON over HTTP to the daemon on `127.0.0.1:<port>` (docs/api.md). The
 /// admin token is read through `token` on every request so a token that appears in the
-/// Keychain after the app started is picked up without rebuilding the client.
+/// secrets file after the app started is picked up without rebuilding the client.
 final class HTTPAPIClient: APIClient {
     let baseURL: URL
     private let token: @Sendable () -> String?

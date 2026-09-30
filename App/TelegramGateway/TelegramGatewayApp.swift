@@ -9,7 +9,7 @@ struct TelegramGatewayApp: App {
     @State private var model: AppModel
 
     init() {
-        // Under `xcodebuild test` the app is only a host for the test bundle: no Keychain
+        // Under `xcodebuild test` the app is only a host for the test bundle: no secrets file
         // reads, no polling, no launchd.
         let isTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil

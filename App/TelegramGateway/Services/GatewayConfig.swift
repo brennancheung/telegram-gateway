@@ -14,6 +14,13 @@ struct GatewayConfig: Sendable, Equatable {
     var port: Int
     /// Absolute path of the daemon binary the launcher script should exec (development).
     var daemonPath: String?
+    /// Where the admin token lives: `"file"` (default, `secrets.json`) or `"keychain"`
+    /// (opt-in for a stably-signed build; see `AdminToken`). Anything else reads as `file`.
+    var secrets: String?
+
+    var secretsSource: AdminToken.Source {
+        secrets.flatMap(AdminToken.Source.init(rawValue:)) ?? .file
+    }
 
     var hasCredentials: Bool {
         guard let apiId, apiId > 0, let apiHash else { return false }
@@ -40,6 +47,9 @@ struct GatewayConfig: Sendable, Equatable {
 
     static var fileURL: URL { directory.appending(path: "config.json") }
 
+    /// `<TGW_HOME>/secrets.json`, written by the daemon, mode 0600: `{"admin-token": "tgw_…"}`.
+    static var secretsURL: URL { directory.appending(path: "secrets.json") }
+
     /// `~/Library/Logs/TelegramGateway/`, where the launcher and the foreground runner write.
     static var logDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/TelegramGateway", directoryHint: .isDirectory)
@@ -61,13 +71,15 @@ struct GatewayConfig: Sendable, Equatable {
         apiHash = raw["api_hash"] as? String
         port = raw["port"] as? Int ?? Self.defaultPort
         daemonPath = raw["daemon_path"] as? String
+        secrets = raw["secrets"] as? String
     }
 
-    init(apiId: Int? = nil, apiHash: String? = nil, port: Int = GatewayConfig.defaultPort, daemonPath: String? = nil) {
+    init(apiId: Int? = nil, apiHash: String? = nil, port: Int = GatewayConfig.defaultPort, daemonPath: String? = nil, secrets: String? = nil) {
         self.apiId = apiId
         self.apiHash = apiHash
         self.port = port
         self.daemonPath = daemonPath
+        self.secrets = secrets
     }
 
     /// Writes `updates` into the file, keeping every other key. Creates the directory and the

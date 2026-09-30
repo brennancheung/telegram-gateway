@@ -546,7 +546,7 @@ struct APIError: Error, Decodable, Hashable, Sendable {
 enum APIClientError: Error, LocalizedError, Sendable {
     /// No TCP connection: the daemon is not running (or listens on another port).
     case unreachable(String)
-    /// The Keychain has no admin token, so the request could not be authenticated.
+    /// No admin token is stored, so the request could not be authenticated.
     case noToken
     /// The daemon answered with an error body.
     case api(APIError, status: Int, passwordHint: String?)
@@ -558,7 +558,7 @@ enum APIClientError: Error, LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .unreachable(let detail): "Gateway not reachable (\(detail))"
-        case .noToken: "No admin token in the Keychain"
+        case .noToken: "No admin token stored (secrets.json)"
         case .api(let error, _, _): error.message
         case .unexpectedStatus(let status): "Unexpected HTTP status \(status)"
         case .decoding(let detail): "Could not read the gateway's response: \(detail)"

@@ -26,8 +26,13 @@ A dot appears on the menu bar icon while an access request is waiting.
   System Settings → General → Login Items & Extensions, and macOS may ask the owner to
   allow them once.
 - **Admin token**: the one token that may call `/v1/admin/*` (api.md "Authentication"). The
-  daemon generates it on first run and stores it in the login Keychain (service
-  `TelegramGateway`, account `admin-token`); the app reads it from there.
+  daemon generates it on first run and writes it to the **secrets file**
+  `~/Library/Application Support/TelegramGateway/secrets.json` (mode 0600, JSON
+  `{"admin-token": "tgw_…"}`); the app reads it from there. The login Keychain (service
+  `TelegramGateway`, account `admin-token`) is an opt-in alternative for a shipped,
+  stably-signed build, selected with `"secrets": "keychain"` in `config.json`. Development
+  builds must not use it: every ad-hoc-signed rebuild is a new identity to the Keychain, so
+  each read would prompt the owner for their password. Tests and previews never touch it.
 - **`api_id` / `api_hash`**: the identity of this software with Telegram, registered once at
   https://my.telegram.org ([development.md](development.md) "Register api_id / api_hash").
 - **Popover**: the 360×520 panel that opens under the menu bar icon.
@@ -68,7 +73,7 @@ App/
   TelegramGateway/
     TelegramGatewayApp.swift   @main, MenuBarExtra (.window style), menu bar icon with badge
     API/                       APIClient protocol, HTTPAPIClient (URLSession), FakeAPIClient, models
-    Services/                  GatewayConfig (config.json), AdminToken (Keychain), DaemonManager
+    Services/                  GatewayConfig (config.json), AdminToken (secrets.json; Keychain opt-in), DaemonManager
                                (SMAppService + foreground child), QRCodeImage / LoginLink
     State/AppModel.swift       @Observable state; decides which screen from facts; polling
     Views/                     Setup, Login, Chats, Access (+ Approve), Status, Root/Header
@@ -100,8 +105,8 @@ script (which launchd runs without the app's environment) finds the same binary.
 **A shipped build** (TODO, not done): a build phase copies the release `GatewayDaemon` and
 `libtdjson.dylib` into `Contents/MacOS/`, `gateway-launcher`'s last fallback already points
 there, the daemon's `@rpath` must resolve to the bundled dylib, and the bundle is signed with a
-Developer ID so the Keychain stops prompting. Until then the app is a development tool that
-runs the daemon from the repository.
+Developer ID (at which point `"secrets": "keychain"` becomes usable without prompts). Until
+then the app is a development tool that runs the daemon from the repository.
 
 ## The gateway as a LaunchAgent
 
@@ -171,7 +176,7 @@ The popover decides its screen from facts, in this order:
 | Facts | Screen |
 |---|---|
 | `config.json` lacks valid `api_id`/`api_hash`, or `/v1/health` does not answer | **Setup** (credentials, then gateway control) |
-| Daemon answers, Keychain has no `admin-token` | **Admin token not found** with what to do |
+| Daemon answers, `secrets.json` has no `admin-token` | **Admin token not found** with what to do |
 | Daemon answers, `tdlib.auth_state` is not `ready` | **Login** |
 | Logged in | **Status / Chats / Access** tabs |
 
@@ -253,16 +258,22 @@ directory with its own `config.json` keeps a test away from the real one.
 - The Setup screen says *Registered, but launchd cannot find the agent*: the app bundle moved
   (for example `App/.derived` was deleted and rebuilt elsewhere). Click Re-register.
 
-**"Admin token not found".** The daemon is up but the Keychain has no
-`TelegramGateway` / `admin-token` item.
+**"Admin token not found".** The daemon is up but
+`~/Library/Application Support/TelegramGateway/secrets.json` has no `admin-token` entry (or
+does not exist).
 - The daemon writes it on its first start; if it just started, click Retry.
-- A Keychain dialog *TelegramGateway wants to use your confidential information stored in
-  "admin-token"* appears the first time after each rebuild, because the ad-hoc-signed app is
-  a new "application" to the Keychain each time: click **Always Allow**. Deny leaves the app
-  on this screen (the error line shows `errSecAuthFailed` / `User interaction is not
-  allowed`); Retry shows the dialog again.
+- The app and the daemon must use the same data directory: a daemon started with a custom
+  `TGW_HOME` writes its `secrets.json` there, and the app reads `TGW_HOME` from its own
+  environment (unset for an app launched from Finder or `open`).
+- The error line names the problem when the file exists but is unreadable (not a JSON
+  object, token not a string); fix or delete the file and Restart gateway to regenerate.
 - *The gateway rejected the admin token* on the Status screen means the daemon regenerated
-  it (e.g. `tgw` asked for a new one) after the app read it; Refresh re-reads the Keychain.
+  it (e.g. `tgw` asked for a new one) after the app read it; Refresh re-reads the file.
+
+**Keychain password prompts.** Only possible with `"secrets": "keychain"` in `config.json`,
+which no development setup should have: the ad-hoc-signed app is a new "application" to the
+Keychain after every rebuild, so each read prompts. Remove the key (or set `"file"`) and
+restart the daemon so it writes `secrets.json`.
 
 **QR code does not scan or "expired" on the phone.** The link rotates roughly every 30s and
 the app redraws it within 2s of the daemon reporting a new one; keep the popover open while

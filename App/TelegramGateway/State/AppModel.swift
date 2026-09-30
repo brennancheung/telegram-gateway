@@ -26,7 +26,7 @@ final class AppModel {
         case loading
         /// Credentials missing, or the daemon is not answering: show setup and gateway control.
         case setup
-        /// Daemon up, but the Keychain has no admin token.
+        /// Daemon up, but the secrets file has no admin token.
         case tokenMissing
         /// Daemon up, Telegram login not finished.
         case login
@@ -102,7 +102,7 @@ final class AppModel {
 
     // MARK: Factories
 
-    /// The app as the owner runs it: real config file, real Keychain, real daemon.
+    /// The app as the owner runs it: real config file, real secrets file, real daemon.
     static func live() -> AppModel {
         var configError: String?
         let config: GatewayConfig
@@ -206,7 +206,7 @@ final class AppModel {
             status = try await client.adminStatus()
             tokenError = nil
         } catch let error as APIClientError where error.apiCode == "invalid_token" || error.apiCode == "missing_token" {
-            tokenError = "The gateway rejected the admin token in the Keychain. The daemon may have regenerated it; restart the app after `tgw` shows the new one."
+            tokenError = "The gateway rejected the stored admin token. The daemon may have regenerated it; restart the app after `tgw` shows the new one."
         } catch {
             lastError = error.localizedDescription
         }
@@ -216,9 +216,10 @@ final class AppModel {
         }
     }
 
+    /// Reads `secrets.json` (or, opt-in, the Keychain). Never called for previews or tests.
     func loadToken() {
         do {
-            token = try AdminToken.read()
+            token = try AdminToken.read(config: config)
             tokenBox.set(token)
             tokenError = nil
         } catch {

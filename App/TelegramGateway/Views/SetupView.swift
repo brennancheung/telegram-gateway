@@ -224,7 +224,7 @@ struct SetupView: View {
     }
 }
 
-/// The daemon answers but the Keychain has no admin token.
+/// The daemon answers but no admin token is stored.
 struct TokenMissingView: View {
     @Environment(AppModel.self) private var model
 
@@ -232,13 +232,17 @@ struct TokenMissingView: View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Admin token not found", systemImage: "key.slash")
                 .font(.headline)
-            Text("The gateway is running, but the login Keychain has no item with service **TelegramGateway** and account **admin-token**. The daemon writes it the first time it starts; the app reads it to call the admin API.")
+            Text(model.config.secretsSource == .keychain
+                 ? "The gateway is running, but the login Keychain has no item with service **TelegramGateway** and account **admin-token** (config.json selects the Keychain). The daemon writes it the first time it starts; the app reads it to call the admin API."
+                 : "The gateway is running, but **\(GatewayConfig.secretsURL.path)** has no **admin-token** entry. The daemon writes it the first time it starts; the app reads it to call the admin API.")
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 6) {
                 Text("What to do")
                     .font(.subheadline.weight(.semibold))
-                Text("1. If the daemon just started, wait a few seconds and click Retry.\n2. If a Keychain dialog asked whether TelegramGateway may use \"admin-token\", click Always Allow.\n3. Otherwise check the gateway log for a Keychain error, then Restart gateway from the menu.")
+                Text(model.config.secretsSource == .keychain
+                     ? "1. If the daemon just started, wait a few seconds and click Retry.\n2. If a Keychain dialog asked whether TelegramGateway may use \"admin-token\", click Always Allow.\n3. Otherwise check the gateway log for a Keychain error, then Restart gateway from the menu."
+                     : "1. If the daemon just started, wait a few seconds and click Retry.\n2. Check the gateway log (menu → Show gateway log) for an error writing secrets.json, then Restart gateway.\n3. If the daemon runs with another TGW_HOME, point the app at the same directory.")
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
             }
