@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 810 280" width="810" height="280" role="img" aria-labelledby="t d">
+  <title id="t">Telegram Gateway overview</title>
+  <desc id="d">The gateway runs on your Mac and talks to Telegram through TDLib. The menu bar app and the tgw command-line tool sign in, choose chats and approve apps. Your apps receive events over WebSocket, webhooks or HTTP.</desc>
+  <style>
+    :root { --bg: #ffffff; --ink: #1f2328; --muted: #59636e; --frame: #d1d9e0; --box: #f6f8fa; --line: #59636e; --acc: #0969da; --acc-fill: rgba(9,105,218,0.08); }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #0d1117; --ink: #e6edf3; --muted: #9198a1; --frame: #3d444d; --box: #151b23; --line: #9198a1; --acc: #4493f8; --acc-fill: rgba(68,147,248,0.12); }
+    }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: var(--ink); }
+    .bg { fill: var(--bg); stroke: var(--frame); stroke-width: 1.5; }
+    .frame { fill: none; stroke: var(--frame); stroke-width: 1.5; }
+    .zone { fill: var(--acc-fill); stroke: var(--acc); stroke-width: 1.5; }
+    .box { fill: var(--box); stroke: var(--line); stroke-width: 1.2; }
+    .key { fill: var(--bg); stroke: var(--acc); stroke-width: 2; }
+    .ln { fill: none; stroke: var(--line); stroke-width: 1.5; }
+    .dash { stroke-dasharray: 5 4; }
+    .life { stroke: var(--frame); stroke-width: 1.5; stroke-dasharray: 3 4; }
+    .head { fill: var(--line); }
+    .b { font-weight: 600; font-size: 14px; }
+    .m { fill: var(--muted); }
+    .s { font-size: 12px; }
+    .c { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    .zl { fill: var(--acc); font-weight: 600; }
+    .halo { paint-order: stroke; stroke: var(--bg); stroke-width: 5px; stroke-linejoin: round; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path class="head" d="M0,0 L10,5 L0,10 z"/>
+    </marker>
+  </defs>
+  <rect class="bg" x="1" y="1" width="808" height="278" rx="12"/>
+
+  <rect class="box" x="24" y="78" width="110" height="56" rx="28"/>
+  <text class="b" x="79" y="111" text-anchor="middle">Telegram</text>
+
+  <rect class="zone" x="176" y="20" width="420" height="240" rx="12"/>
+  <text class="zl" x="192" y="44">Your Mac</text>
+
+  <rect class="key" x="216" y="56" width="230" height="100" rx="8"/>
+  <text class="b" x="331" y="86" text-anchor="middle">Gateway</text>
+  <text class="m" x="331" y="108" text-anchor="middle">background service</text>
+  <text class="m" x="331" y="128" text-anchor="middle">monitored chats · event log · grants</text>
+
+  <rect class="box" x="216" y="200" width="230" height="44" rx="8"/>
+  <text x="331" y="227" text-anchor="middle">Menu bar app · <tspan class="c">tgw</tspan></text>
+
+  <rect class="box" x="664" y="78" width="122" height="56" rx="8"/>
+  <text class="b" x="725" y="111" text-anchor="middle">Your apps</text>
+
+  <path class="ln" d="M136,106 H214" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text class="s m halo" x="156" y="98" text-anchor="middle">TDLib</text>
+
+  <path class="ln" d="M331,198 V158" marker-end="url(#arrow)"/>
+  <text class="s m halo" x="342" y="182">sign in, choose chats, approve apps</text>
+
+  <path class="ln" d="M448,106 H662" marker-end="url(#arrow)"/>
+  <text class="s m halo" x="555" y="98" text-anchor="middle">WebSocket · webhooks · HTTP</text>
+</svg>

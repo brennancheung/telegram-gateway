@@ -21,23 +21,7 @@ HTTP — so that no app has to integrate with Telegram or ever see the user's cr
 
 ## The pieces
 
-```mermaid
-flowchart TB
-  TG(("Telegram"))
-  subgraph GW["The gateway — GatewayDaemon, a launchd LaunchAgent"]
-    direction LR
-    TD["<b>TDLib</b><br/>login, chat cache"]
-    TR["<b>Translator</b><br/>TDLib JSON → the gateway's<br/>own event format"]
-    LOG[("<b>Event log</b><br/>SQLite, numbered events")]
-    DEL["<b>Delivery</b><br/>grants choose<br/>who gets what"]
-    TD --> TR --> LOG --> DEL
-  end
-  ADMIN["<b>Menu bar app, tgw</b><br/>sign in, pick chats,<br/>approve and revoke"]
-  APPS["<b>Apps</b><br/>WebSocket: GET /v1/events/stream<br/>HTTP: GET /v1/events, …<br/>webhooks: POST to the app's URL"]
-  TG <-->|"MTProto, Telegram's protocol"| GW
-  ADMIN -->|"admin token<br/>127.0.0.1:41414"| GW
-  GW -->|"app tokens<br/>127.0.0.1:41414"| APPS
-```
+![Inside the gateway, TDLib feeds the translator, which writes numbered events to the event log; delivery sends each app what its grant allows. Telegram connects to TDLib over MTProto. The menu bar app and tgw use the admin token and apps use app tokens, both on 127.0.0.1:41414.](images/architecture.svg)
 
 ### The gateway service
 

@@ -8,18 +8,7 @@ Telegram messages asks the gateway for access; you approve it, limit it to speci
 can revoke it with one click. Approved apps receive each new message as an event over
 WebSocket or webhooks.
 
-```mermaid
-flowchart LR
-  TG(("Telegram"))
-  subgraph mac["Your Mac"]
-    GW["<b>Gateway</b><br/>background service<br/>monitored chats · event log · grants"]
-    ADMIN["Menu bar app<br/>tgw command-line tool"]
-  end
-  APPS["<b>Your apps</b>"]
-  TG <-->|"TDLib"| GW
-  ADMIN -->|"sign in, choose chats,<br/>approve apps"| GW
-  GW -->|"WebSocket · webhooks · HTTP"| APPS
-```
+![Telegram connects through TDLib to the gateway, a background service on your Mac. The menu bar app and tgw sign in, choose chats and approve apps. Your apps receive events over WebSocket, webhooks or HTTP.](docs/images/overview.svg)
 
 ## Why
 
