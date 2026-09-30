@@ -1,14 +1,14 @@
 # Integrating an app
 
-This guide takes you from nothing to an app that receives every message from chosen Telegram
-chats, in order, without losing or repeating any, and resumes where it stopped after a
-restart.
+This guide covers requesting access, consuming ordered events, persisting a resume cursor,
+and handling duplicate deliveries. It is intended for developers building applications
+against an existing Telegram Gateway installation.
 
-**What you will have at the end:** a token for your app, a consumer that reads events over a
-WebSocket or receives them at a webhook, a stored cursor that makes restarts lossless, and,
-if you need them, past messages and media files.
+**The integration provides:** a scoped app token, a WebSocket or webhook consumer, and a
+persisted sequence number for resuming retained events. Optional permissions allow access
+to earlier message history and media files.
 
-**What you need first:**
+**Prerequisites:**
 
 - A running gateway that is signed in to Telegram, with at least one chat monitored. Setting
   one up is covered in the [README](../README.md).
@@ -17,7 +17,8 @@ if you need them, past messages and media files.
 
 In this guide "you" are the developer of an **app**, a program that consumes the gateway.
 **The user** is the person who runs the gateway and whose Telegram account it is signed in
-to. They may be you.
+to. The developer and account owner may be the same person. Examples use fictional data;
+replace sample request IDs and tokens with the values returned by the gateway.
 
 The exact contract is in [api.md](api.md) (endpoints), [events.md](events.md) (what an event
 looks like) and [grants.md](grants.md) (what your app may see). This guide links into them.
@@ -61,9 +62,10 @@ with a **token** the user granted it. It reads events in one of two ways:
 - over a **WebSocket**, a persistent connection your app opens to the gateway, or
 - at a **webhook**, an HTTPS URL of yours that the gateway posts events to.
 
-Because every event has a `seq` and the gateway keeps events, your app can crash, restart or
-be offline for a week and continue exactly where it stopped, by passing back the `seq` of the
-last event it processed. That number is your **cursor**.
+Each event has a `seq`. Persist the last successfully processed sequence number as the
+app's **cursor** and pass it when reconnecting. Replay is available while the events remain
+retained; a pruned cursor returns `410 history_pruned`. Consumers must also deduplicate
+deliveries, particularly when a webhook acknowledgement is lost.
 
 Other terms you will meet:
 

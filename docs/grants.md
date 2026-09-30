@@ -1,9 +1,9 @@
 # Grants: the access model
 
-The gateway is signed in to Telegram as a real person's own account, so it is in a position
-to see everything that person sees. This document explains how little of that an app
-actually gets, who controls it, and how access ends. Read it before you run an app against
-your gateway, or to understand what your app will and will not be given.
+Telegram Gateway separates account access from application permissions. The account owner
+chooses which chats are monitored and grants each application a subset of chats and scopes.
+This document defines those boundaries, token handling, and revocation behavior for
+integration developers and gateway operators.
 
 Three parties appear throughout:
 
@@ -36,8 +36,8 @@ channel, a group, or a private conversation.)
 
 **Monitored chats** are the chats the gateway watches at all. The user picks them in the
 gateway's menu bar app. Only messages in monitored chats are written to the gateway's event
-log. Messages in every other chat pass through the gateway's Telegram library in memory and
-are discarded. The set is global: it does not belong to any app.
+log. Unmonitored messages are excluded from that log and app delivery, although TDLib
+maintains its own encrypted cache. The monitored set is global across applications.
 
 **Granted chats** are, for one app, the chats that app may read. A **grant** is the record of
 one app's access: its name, its scopes, its chats and its token. The user creates a grant by
@@ -45,15 +45,16 @@ approving the app's access request.
 
 One rule ties the two together:
 
-> **A grant never exceeds the monitored set.** What an app can see at any moment is
+> **Effective access never exceeds the monitored set.** What an app can see at any moment is
 > `granted chats ∩ monitored chats`, computed each time the app asks.
 
 The API calls that intersection `effective_chat_ids`. It is in the grant object returned by
 `GET /v1/me`.
 
-![Nested sets: of every chat the account can see, the user monitors some. Each app is granted
-some chats, and sees only the part of its grant that is also monitored. Chats outside the
-monitored set are never stored or delivered.](images/grants.svg)
+![Two overlapping sets within the chats visible to the Telegram account: monitored chats
+chosen by the user and chats granted to one app. The highlighted intersection is what the
+app can read, subject to its scopes. Unmonitored messages are never stored in the gateway
+event log or delivered.](images/grants.png)
 
 | An app can | An app cannot |
 |---|---|
@@ -253,8 +254,9 @@ Advice for your app:
   user chose; a leaked token is the user's data leaking.
 - **Store the webhook secret beside it.** Without it you cannot verify deliveries. The only
   way to get a new one is `PUT /v1/me/webhook`, which invalidates the old one.
-- **Store your cursor** (the `seq` of the last event you processed) with them. It is what
-  makes restarts lossless ([integrating.md](integrating.md#connect-and-resume-with-since)).
+- **Store your cursor** (the `seq` of the last event successfully processed) with them.
+  It allows the app to resume retained events after a restart
+  ([integrating.md](integrating.md#connect-and-resume-with-since)).
 - **On `401 token_revoked`, stop retrying** and tell a person. Only the user can restore
   access.
 - **Never log the token.** Log `X-TGW-Request-Id` and `error.code` instead.

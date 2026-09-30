@@ -1,53 +1,53 @@
 # Telegram Gateway
 
-A macOS service that signs in to Telegram **as you** — your own user account, not a bot — and
-gives other programs scoped, revocable access to the chats you choose.
+Telegram Gateway is a local, read-only API for building applications that consume Telegram
+messages. It runs on macOS, connects through a Telegram user account, and delivers events
+from selected chats over HTTP, WebSocket, or webhooks.
 
-You sign in once. You pick which channels and groups are monitored. Any app that wants your
-Telegram messages asks the gateway for access; you approve it, limit it to specific chats, and
-can revoke it with one click. Approved apps receive each new message as an event over
-WebSocket or webhooks.
+The account owner signs in once, chooses which chats to monitor, and approves each
+application's access. Applications receive scoped, revocable gateway tokens without handling
+Telegram credentials or embedding Telegram's client library. A menu bar app and the `tgw`
+command-line tool provide administration.
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="screenshots/06-chats-dark.png">
-    <img src="screenshots/06-chats.png" width="540" alt="The Chats window: the chats and folders the gateway monitors, each with a checkbox.">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/06-chats-dark.png">
+    <img src="docs/screenshots/06-chats.png" width="540" alt="The Chats window: the chats and folders the gateway monitors, each with a checkbox.">
   </picture>
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="screenshots/08-app-approve-dark.png">
-    <img src="screenshots/08-app-approve.png" width="300" alt="Approving an app: tick which chats it may read and what it may read in them.">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/08-app-approve-dark.png">
+    <img src="docs/screenshots/08-app-approve.png" width="300" alt="Approving an app: tick which chats it may read and what it may read in them.">
   </picture>
   <br>
-  <sub>Left: you choose which chats the gateway watches. Right: an app asks for access and you decide exactly what it gets.</sub>
+  <sub>Chat selection and application approval. Screenshots use fictional sample data.</sub>
 </p>
 
-![Telegram connects through TDLib to the gateway, a background service on your Mac. The menu bar app and tgw sign in, choose chats and approve apps. Your apps receive events over WebSocket, webhooks or HTTP.](docs/images/overview.svg)
+![Telegram connects through TDLib to the gateway, a background service on your Mac. The menu bar app and tgw sign in, choose chats and approve apps. Your apps receive events over WebSocket, webhooks or HTTP.](docs/images/overview.png)
 
 ## Why
 
-Reading Telegram as a user normally means every project embeds its own Telegram client and
-asks for your login. Bots avoid that, but a bot has to be added to every chat and cannot see
-what you see.
+Applications that need a user's view of Telegram otherwise have to manage a Telegram client
+and login session themselves. Bot access differs from user-account access and requires the
+bot to be available in the relevant chats.
 
 The gateway puts the login in one place:
 
-- **One sign-in, many apps.** Apps never see your Telegram credentials or session. They get a
-  token that works only against the gateway.
-- **You choose what is shared.** Only chats you mark as monitored ever leave the gateway, and
-  each app is limited to the chats and permissions you grant it.
-- **Nothing is lost.** Every event is numbered and stored before delivery. An app that was
-  offline resumes from the last event it saw; after your Mac sleeps, the gateway fetches what
-  it missed.
-- **It stays out of your way.** The gateway is read-only: it never sends messages, never marks
-  anything as read, and never shows you as online.
+- **One session, multiple applications.** Apps authenticate with gateway tokens; the gateway
+  owns the Telegram session.
+- **Scoped access.** Each app can read only chats that are both monitored and granted to it,
+  subject to its approved permissions.
+- **Resumable delivery.** Events are numbered and stored before delivery. Apps resume from
+  their last processed sequence number while those events remain retained. Webhook consumers
+  must handle duplicate deliveries.
+- **Read-only operation.** The gateway never sends messages, marks messages as read, or sets
+  the Telegram account online.
 
-Typical uses: watching channels for mentions of your product, collecting support questions
-from community groups, feeding industry news into a summarizer, counting what a community
-talks about. The gateway only delivers messages; analysis belongs in the apps.
+Typical integrations include product-mention alerts, support triage, news summarization, and
+community analytics. The gateway delivers messages; consuming applications perform analysis.
 
 ## Status
 
-Early. The gateway, the command-line tool and the menu bar app build and pass their test
+Pre-release. The gateway, the command-line tool and the menu bar app build and pass their test
 suites, and run together on macOS. The path from a real Telegram sign-in through to delivered
 events has not yet been verified end to end. See [docs/status.md](docs/status.md) for what
 works, what is unverified, and what is planned.
@@ -90,7 +90,9 @@ needs you, such as an app asking for access. [docs/app.md](docs/app.md) covers e
 
 ## Connecting an app
 
-An app asks for access, you approve it in the menu bar app, and the app receives a token.
+An app submits an access request. The account owner approves its chats and permissions in
+the menu bar app or with `tgw`, and the app polls to collect its token. These examples use
+fictional identifiers and abbreviated tokens; replace them with values returned by the API.
 
 ```sh
 # 1. Ask for access
@@ -103,7 +105,7 @@ curl -s http://127.0.0.1:41414/v1/access-requests \
 # → {"request_id": "req_…", "status": "pending",
 #    "poll_url": "http://127.0.0.1:41414/v1/access-requests/req_…", …}
 
-# 2. Poll until it is approved; the token is handed over once
+# 2. Poll for approval; the token is available for 10:00 after approval
 curl -s http://127.0.0.1:41414/v1/access-requests/req_…
 # → {"status": "approved", "token": "tgw_…", "grant": {…}}
 
@@ -154,17 +156,25 @@ consumer.
 
 ## Security and privacy
 
-- The API is reachable only from your own Mac. Every request needs a token, and tokens are
-  stored only as hashes.
-- Your Telegram session is kept in TDLib's encrypted database under
-  `~/Library/Application Support/TelegramGateway/`. Apps never get access to it.
-- Chats you have not marked as monitored — including your private conversations — are never
-  stored in the event log or delivered to any app.
+- The API listens only on `127.0.0.1`. Data and administrative endpoints require tokens;
+  health checks and access-request submission and polling do not.
+- Grant records store app-token hashes. Approved access requests retain the token for a
+  `10:00` collection window. The admin token is stored in the configured secret store, and
+  webhook signing secrets are stored in the gateway database.
+- TDLib keeps the Telegram session in its encrypted data directory under
+  `~/Library/Application Support/TelegramGateway/`. The API does not expose that directory.
+- The gateway event log stores monitored message content unencrypted and retains it
+  indefinitely by default. Retention settings and pruning can limit stored history.
+- Unmonitored messages are not written to the gateway event log or delivered to apps.
+  TDLib maintains its own encrypted cache. Revocation stops future access but cannot remove
+  data an app has already received.
 - The gateway uses [TDLib](https://core.telegram.org/tdlib), Telegram's official client
   library, built from source at a pinned commit.
 
-You are running a client on your own account, so Telegram's
-[terms of service](https://core.telegram.org/api/terms) apply to what you do with it.
+The gateway uses a Telegram user account and is subject to Telegram's
+[terms of service](https://core.telegram.org/api/terms). See [the access model](docs/grants.md)
+for permission boundaries and [the architecture](docs/architecture.md#security-model) for
+storage and local-access details.
 
 ## Repository layout
 
@@ -180,7 +190,7 @@ App/                the menu bar app (Xcode project)
 vendor/tdlib/       build script and pinned commit for TDLib
 launchd/            LaunchAgent template
 docs/               documentation
-screenshots/        the menu bar app, light and dark, from its sample data
+  screenshots/      the menu bar app, light and dark, from its sample data
 ```
 
 ## Contributing

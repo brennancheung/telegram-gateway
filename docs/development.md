@@ -54,8 +54,8 @@ git-ignored.
   are reused. Delete `vendor/tdlib/build` to rebuild, `vendor/tdlib/src` to clone again.
 - It uses 18 parallel jobs by default; `JOBS=8 ./vendor/tdlib/build.sh` changes that.
 
-A clean build takes about 01:43 on an Apple M5 Max (18 cores). A re-run with everything
-present takes about 2s.
+A clean TDLib build takes approximately 02:00 on recent Apple silicon; timings vary by
+hardware. An unchanged build reuses the existing outputs.
 
 ## Build and test
 

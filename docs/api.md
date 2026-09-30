@@ -7,9 +7,9 @@ http://127.0.0.1:41414
 ```
 
 This document specifies that API. It is written for the developer of an **app**: a program
-that reads Telegram messages through the gateway. That is "you". **The user** is the person
+that reads Telegram messages through the gateway. **The user** is the person
 who runs the gateway: the Telegram account it is signed in to is theirs, and they choose what
-each app may read.
+each app may read. Example identities, credentials, and request IDs are fictional.
 
 Related documents: the event objects the API carries are defined in [events.md](events.md);
 the access model (what an app can and cannot see) in [grants.md](grants.md); a step-by-step
@@ -270,7 +270,7 @@ An app obtains a token through a device-code style flow: the app asks, the user 
 the gateway's menu bar app, and the app, polling, receives the token. There is no browser
 and no redirect, and the app never sees the user's Telegram credentials.
 
-![The app posts an access request and receives a request id and poll URL. The gateway shows the request to the user in the menu bar app. The app polls every 3s and sees pending until the user approves, choosing chats and scopes; the next poll returns approved with the token and grant.](images/access-request.svg)
+![The app posts an access request and receives a request id and poll URL. The gateway shows the request to the user in the menu bar app. The app polls every 3s and sees pending until the user approves, choosing chats and scopes; the next poll returns approved with the token and grant.](images/access-request.png)
 
 ### `POST /v1/access-requests`
 
@@ -621,8 +621,9 @@ There is one log per gateway, so an app sees gaps in the numbers where events fo
 outside its grant are skipped. Within what one app sees, order is by `seq` and never changes.
 The event object is defined in [events.md](events.md).
 
-An app keeps a **cursor**: the `seq` of the last event it processed. Passing the cursor back
-as `since` is how an app resumes after a restart without losing or repeating events.
+An app keeps a **cursor**: the `seq` of the last event successfully processed. Passing that
+cursor as `since` resumes later retained events. Persist the cursor after processing and
+deduplicate by `seq` if a crash causes an event to be processed again.
 
 Both endpoints below apply the grant at the time of reading. An app receives events for the
 chats in its current `effective_chat_ids`, and only the event types its scopes allow:

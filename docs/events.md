@@ -9,7 +9,7 @@ change what an app receives.
 
 In this document "you" are the developer of an **app**, a program that consumes the gateway.
 **The user** is the person who runs the gateway and whose Telegram account it is signed in
-to.
+to. Example accounts, handles, chat IDs, and message content are fictional.
 
 How events are fetched is in [api.md](api.md#events). Which events an app may see is in
 [grants.md](grants.md).

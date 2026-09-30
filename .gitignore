@@ -1,12 +1,62 @@
+# Swift Package Manager (keep Package.resolved tracked)
 .build/
 .swiftpm/
-*.xcodeproj/xcuserdata/
-*.xcworkspace/xcuserdata/
+
+# Xcode build output and per-user state (keep shared project settings)
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
 DerivedData/
+.derived/
+/build/
+*.xcarchive/
+*.xcresult/
+*.dSYM/
+*.app/
+*.ipa
+*.dmg
+*.pkg
+*.o
+*.a
+*.dylib
+
+# TDLib checkout and locally built dependencies; keep COMMIT and build.sh
 vendor/tdlib/src/
 vendor/tdlib/build/
 vendor/tdlib/lib/
 vendor/tdlib/include/
+
+# Local environment and credentials (sample environment files may be tracked)
 .env
+.env.*
+!.env.example
+!.env.sample
 *.local.json
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.mobileprovision
+
+# Gateway runtime state; never publish account/session data
+/config.json
+secrets.json
+gateway.sqlite*
+db.sqlite*
+td.binlog
+daemon.lock
+*.log
+/logs/
+/tmp/
+
+# Editor and macOS local files
+.idea/
+*.swp
+*.swo
+*~
 .DS_Store
+.AppleDouble
+.LSOverride
+._*

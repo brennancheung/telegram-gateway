@@ -3,8 +3,8 @@
 Telegram Gateway is pre-release software. It builds from source, its test suite passes, and
 the gateway, the menu bar app and `tgw` run together on a Mac. The part that talks to
 Telegram has been written against TDLib's schema and tested with a scripted stand-in; it has
-not yet been verified against a live Telegram account. Read the second section before you
-rely on it.
+not yet been verified against a live Telegram account. The unverified behavior and known
+limitations below should inform deployment decisions.
 
 ## What works today
 
@@ -29,8 +29,7 @@ rely on it.
 ## Not yet verified against a live Telegram account
 
 The code on the TDLib side follows TDLib's published schema, and the tests feed it objects
-built from that schema. None of the following has been observed with a real account yet, so
-expect to find differences:
+built from that schema. The following behavior still requires live-account verification:
 
 - Logging in through the gateway: the QR flow, phone number with code and two-step password,
   accounts that log in with an e-mail code, and logging out and in again without a restart.

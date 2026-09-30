@@ -1,18 +1,22 @@
 # Getting started
 
-This walkthrough takes you from a fresh clone to Telegram messages arriving in an app of your
-own. It goes one step at a time, says what you should see after each step, and what to do if
-you see something else.
+This guide covers building Telegram Gateway from source, connecting a Telegram account,
+selecting monitored chats, and reading events through the local API. Each step includes
+expected output and troubleshooting notes.
 
-**What you will have at the end:**
+**Result:**
 
 - the gateway running in the background on your Mac, starting again at every login;
 - the gateway signed in to your Telegram account as a linked device, like Telegram Desktop;
 - a few chats you chose being monitored, with each new message recorded as an event;
 - a first app, approved by you, reading those events with its own token.
 
-**How long it takes:** about 15:00 of your time. Most of the rest is compiling: TDLib takes
-about 02:00 on a fast Mac and the first `swift build` about 03:00, longer on older machines.
+**Estimated setup time:** about 15:00, plus compilation. TDLib takes approximately 02:00
+and the first `swift build` approximately 03:00 on recent hardware; timings vary by machine.
+
+Screenshots use the app's fictional sample data. Names, handles, chat lists, credentials,
+and QR codes shown in screenshots are examples, not a live Telegram account. Command output
+and API responses below are illustrative; substitute values from the local installation.
 
 Durations here are written `mm:ss` (or `h:mm:ss`); values under a minute are in seconds.
 
@@ -50,8 +54,8 @@ You need:
 - **A Telegram account** and **your phone** with Telegram on it, signed in to that account.
   You approve the gateway's sign-in from the phone.
 
-A word on what you are setting up. The gateway signs in as *you*, not as a bot, so it can
-read every chat your account can read. It only ever stores and passes on messages from chats
+The gateway connects through a Telegram user account rather than a bot. It can access the
+chats available to that account. It only ever stores and passes on messages from chats
 you tick, and only to apps you approve. It never sends messages, never marks anything as
 read, and never shows you as online. Telegram's
 [terms of service](https://core.telegram.org/api/terms) apply to what you do with it.
@@ -59,8 +63,9 @@ read, and never shows you as online. Telegram's
 ## 2. Get your Telegram API key
 
 Telegram asks every program that connects to it for an **API ID** (a number) and an **API
-hash** (32 letters and digits). Together they identify the program, not your account. They
-are free and take a minute to get.
+hash** (32 hexadecimal characters). Together they identify the client application rather
+than its login session. Register a client application to obtain these values before
+connecting the gateway.
 
 1. Open https://my.telegram.org and log in with your phone number. Telegram sends the login
    code to your Telegram app, not by SMS.
@@ -72,8 +77,8 @@ are free and take a minute to get.
 
 Leave the page open; you paste both values in [step 6](#6-connect-to-telegram).
 
-Use a key of your own. Do not copy one from another program (Telegram Desktop's, for
-example): Telegram flags accounts that do.
+Use the API ID and hash registered for this installation; do not copy another client's
+credentials.
 
 ## 3. Build the gateway
 
@@ -147,14 +152,14 @@ App/run.sh
 This builds the menu bar app into `App/.derived` and opens it. A paper-plane icon appears in
 the menu bar, and because nothing is set up yet, a window opens by itself at step 1 of 3.
 
-The app is how you look after the gateway from now on: the icon for a glance, the window for
-everything else. Quitting the app does not stop the gateway.
+The menu bar icon shows service status; the main window manages chats and application
+permissions. The LaunchAgent installed in step 4 keeps the gateway running after the app quits.
 
 ## 6. Connect to Telegram
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../screenshots/02-setup-1-connect-dark.png">
-  <img src="../screenshots/02-setup-1-connect.png" width="820" alt="Step 1 of 3, Connect to Telegram: fields for the API ID and API hash, with a Continue button.">
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/02-setup-1-connect-dark.png">
+  <img src="screenshots/02-setup-1-connect.png" width="820" alt="Step 1 of 3, Connect to Telegram: fields for the API ID and API hash, with a Continue button.">
 </picture>
 
 Paste the **App api_id** into **API ID** and the **App api_hash** into **API hash**, then click
@@ -174,8 +179,8 @@ moves on once Telegram is running inside the gateway, which takes a few seconds.
 ## 7. Sign in
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../screenshots/03-setup-2-sign-in-dark.png">
-  <img src="../screenshots/03-setup-2-sign-in.png" width="820" alt="Step 2 of 3, Scan to sign in: a QR code with instructions to open Telegram on your phone and go to Settings, Devices, Link Desktop Device.">
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/03-setup-2-sign-in-dark.png">
+  <img src="screenshots/03-setup-2-sign-in.png" width="820" alt="Step 2 of 3, Scan to sign in: a QR code with instructions to open Telegram on your phone and go to Settings, Devices, Link Desktop Device.">
 </picture>
 
 On your phone:
@@ -184,11 +189,11 @@ On your phone:
 2. Go to **Settings → Devices → Link Desktop Device**.
 3. Point the camera at the code in the window.
 
-The code renews itself about every 30s, so there is no rush.
+The code refreshes about every 30s. Scan the current code displayed by the running app.
 
 - **Two-step verification.** If you set an extra password in Telegram (Settings → Privacy
   and Security → Two-Step Verification), the window asks for it next and shows your hint.
-- **No camera handy?** Click **Use phone number instead**. Type your number with its country
+- **Phone-number sign-in.** Click **Use phone number instead**. Type your number with its country
   code, then the code Telegram sends to your other devices.
 
 **What you should see:** the window changes to the Chats screen, and your phone lists a new
@@ -206,8 +211,8 @@ from there at any time, as with any other device.
 ## 8. Choose the chats to monitor
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../screenshots/04-setup-3-choose-chats-dark.png">
-  <img src="../screenshots/04-setup-3-choose-chats.png" width="820" alt="Step 3 of 3: a table of every chat and folder in the account, with a Monitored checkbox on each row.">
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/04-setup-3-choose-chats-dark.png">
+  <img src="screenshots/04-setup-3-choose-chats.png" width="820" alt="Step 3 of 3: a table of every chat and folder in the account, with a Monitored checkbox on each row.">
 </picture>
 
 The table lists every chat in your account and every chat folder you made in Telegram. Tick
@@ -220,12 +225,11 @@ unless you tick them.
   later: add a channel to the folder on your phone and the gateway starts watching it without
   another visit here. Chats covered by a ticked folder show as ticked and locked, with
   "via Product folder" under the title.
-- **Changing your mind** is always possible. Unticking a chat stops it at once, for every
-  app.
+- **Stop monitoring.** Unticking a chat removes it from every app's effective access.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../screenshots/06-chats-dark.png">
-  <img src="../screenshots/06-chats.png" width="820" alt="The Chats screen filtered to Monitored: the Product folder, two chats in it shown ticked via the folder, and Industry News.">
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/06-chats-dark.png">
+  <img src="screenshots/06-chats.png" width="820" alt="The Chats screen filtered to Monitored: the Product folder, two chats in it shown ticked via the folder, and Industry News.">
 </picture>
 
 After saving, **Monitored** in the toolbar shows just what the gateway watches, and the bar
@@ -234,8 +238,8 @@ at the bottom says how many.
 ## 9. Check that messages arrive
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../screenshots/05-overview-dark.png">
-  <img src="../screenshots/05-overview.png" width="820" alt="The Overview screen: Monitoring 3 chats, 37 messages in the last hour, a Needs you card and the list of connected apps.">
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/05-overview-dark.png">
+  <img src="screenshots/05-overview.png" width="820" alt="The Overview screen: Monitoring 3 chats, 37 messages in the last hour, a Needs you card and the list of connected apps.">
 </picture>
 
 Click **Overview** in the sidebar. The card at the top says how many chats are monitored and
@@ -270,15 +274,16 @@ service, an agent. An app asks for access, you approve it in the menu bar app, a
 receives a **token**, a password that works only against this gateway and only for what you
 approved.
 
-Here you play both parts, using `curl` as the app.
+This example uses `curl` as the consuming application and the menu bar app for account-owner
+approval.
 
 ### Ask for access
 
 ```sh
 curl -s http://127.0.0.1:41414/v1/access-requests \
   -H 'Content-Type: application/json' \
-  -d '{"name": "My First App",
-       "description": "Prints new messages from my monitored chats.",
+  -d '{"name": "Example Consumer",
+       "description": "Reads events from approved chats.",
        "scopes": ["messages:read", "chats:read"],
        "requested_chats": "any"}'
 ```
@@ -296,24 +301,24 @@ they arrive, and `chats:read` to see chat names. The full list is in
 ### Approve it
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../screenshots/01-menu-bar-dark.png">
-  <img src="../screenshots/01-menu-bar.png" width="300" alt="The menu bar popover: the monitoring summary, and under Needs you, an app that wants access.">
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/01-menu-bar-dark.png">
+  <img src="screenshots/01-menu-bar.png" width="300" alt="The menu bar popover: the monitoring summary, and under Needs you, an app that wants access.">
 </picture>
 
 A dot appears on the menu bar icon. Click the icon: the request is listed under **Needs
 you**. Click it to open the window at the request.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../screenshots/07-app-access-request-dark.png">
-  <img src="../screenshots/07-app-access-request.png" width="820" alt="The Apps screen with a pending request selected, showing what it wants, in which chats, and Deny and Review buttons.">
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/07-app-access-request-dark.png">
+  <img src="screenshots/07-app-access-request.png" width="820" alt="The Apps screen with a pending request selected, showing what it wants, in which chats, and Deny and Review buttons.">
 </picture>
 
 The request shows the app's name and description, what it wants to read, and in which chats.
 Click **Review…**.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../screenshots/08-app-approve-dark.png">
-  <img src="../screenshots/08-app-approve.png" width="460" alt="The approval sheet: checkboxes for each chat and each permission, and Cancel and Approve buttons.">
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/08-app-approve-dark.png">
+  <img src="screenshots/08-app-approve.png" width="460" alt="The approval sheet: checkboxes for each chat and each permission, and Cancel and Approve buttons.">
 </picture>
 
 Choose exactly what the app gets:
@@ -340,9 +345,9 @@ curl -s http://127.0.0.1:41414/v1/access-requests/req_7Hs2…
 {"request_id": "req_7Hs2…", "status": "approved", "token": "tgw_Kq8s…", "grant": {…}}
 ```
 
-Copy the `token`. The gateway hands it over for 10:00 after approval and never shows it
-again. It stores only a hash of it, so a lost token cannot be recovered; the app asks again
-instead.
+Store the `token` securely. It remains available from this endpoint for 10:00 after
+approval. The access request is then purged, leaving only the token hash on the grant. A
+lost token cannot be recovered after that window; the app must request access again.
 
 ### Read events
 
@@ -375,33 +380,35 @@ so far, oldest first:
 }
 ```
 
-To continue later, ask for `since=<next_since>`: you get only what came after. That is the
-whole idea behind the sequence number. A real app keeps a WebSocket open for events as they
-happen, or has the gateway post them to a web address (a **webhook**).
+To resume, pass `since=<next_since>` to retrieve later retained events. Applications can
+also consume live events through a WebSocket or receive HTTP deliveries at a **webhook**
+endpoint.
 [integrating.md](integrating.md) shows both, with a complete program.
 
 ## 11. Day to day
 
-Once set up, there is nothing to do. The gateway starts at login, catches up on messages it
-missed while your Mac slept or was offline, and keeps every event until you prune them.
+The LaunchAgent starts the gateway at login. After sleep or a connection loss, the gateway
+attempts to backfill missed messages from Telegram history. Events remain in the log until
+removed by configured retention or manual pruning. Live-account recovery is still
+[unverified](status.md#not-yet-verified-against-a-live-telegram-account).
 
 **The menu bar icon** tells you when something needs you: a dot for an app waiting for a
 decision, and an amber or red state when the gateway is reconnecting, stopped, or signed out.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../screenshots/09-app-details-dark.png">
-  <img src="../screenshots/09-app-details.png" width="820" alt="The Apps screen with an approved app selected: what it can read, its chats, where it sends to, and a Revoke access button.">
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/09-app-details-dark.png">
+  <img src="screenshots/09-app-details.png" width="820" alt="The Apps screen with an approved app selected: what it can read, its chats, where it sends to, and a Revoke access button.">
 </picture>
 
 **Apps** lists every app with access. Select one to see what it can read, which chats it
 has, and when it last received anything. **Revoke access…** ends its access at once; to get
 it back, the app has to ask again. If an app's webhook stops answering, the gateway retries
 for 24:00:00, then pauses it and lists it under Needs you. **Resume** continues from where it
-stopped, with nothing lost.
+stopped, subject to event retention.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../screenshots/10-gateway-dark.png">
-  <img src="../screenshots/10-gateway.png" width="820" alt="The Gateway screen: status, address and uptime, controls to restart and start at login, the Telegram account and key, and file locations.">
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/10-gateway-dark.png">
+  <img src="screenshots/10-gateway.png" width="820" alt="The Gateway screen: status, address and uptime, controls to restart and start at login, the Telegram account and key, and file locations.">
 </picture>
 
 **Gateway** is the place for the service itself: whether it is running, **Restart**, the
@@ -424,8 +431,8 @@ Every screen is described in full in [app.md](app.md).
 | Understand how it works inside | [architecture.md](architecture.md) |
 | Know what is verified and what is planned | [status.md](status.md) |
 
-If you use a coding agent, point it at the repository: [AGENTS.md](../AGENTS.md) and these
-documents are written so that it can build an integration without further explanation.
+Contributor rules are in [AGENTS.md](../AGENTS.md). Integrations should follow the API and
+event contracts linked above.
 
 ## 13. Removing everything
 

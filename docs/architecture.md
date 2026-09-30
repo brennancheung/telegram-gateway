@@ -21,7 +21,7 @@ HTTP — so that no app has to integrate with Telegram or ever see the user's cr
 
 ## The pieces
 
-![Inside the gateway, TDLib feeds the translator, which writes numbered events to the event log; delivery sends each app what its grant allows. Telegram connects to TDLib over MTProto. The menu bar app and tgw use the admin token and apps use app tokens, both on 127.0.0.1:41414.](images/architecture.svg)
+![Inside the gateway, TDLib feeds the translator, which writes numbered events to the event log; delivery sends each app what its grant allows. Telegram connects to TDLib over MTProto. The menu bar app and tgw use the admin token and apps use app tokens, both on 127.0.0.1:41414.](images/architecture.png)
 
 ### The gateway service
 
@@ -63,16 +63,14 @@ the API complete and makes the gateway usable on a machine with no app installed
 
 ### The TDLib build
 
-Package managers ship TDLib builds that are years old, and TDLib publishes no tagged
-releases. The repository therefore builds `libtdjson.dylib` from a pinned commit
-(`vendor/tdlib/COMMIT`) with OpenSSL linked statically, so the library depends on nothing
-outside macOS. TDLib's JSON interface is four C functions; Swift calls them directly through
-a small C module, with no bridge process and no third-party binding in between.
+The repository builds `libtdjson.dylib` from the TDLib commit recorded in
+`vendor/tdlib/COMMIT` for reproducible builds. OpenSSL is linked statically, so the library
+depends on nothing outside macOS. TDLib's JSON interface is four C functions; Swift calls
+them directly through a small C module, with no bridge process and no third-party binding.
 
 The gateway identifies itself to Telegram with its own `api_id` and `api_hash`, a pair that
-names a client program and is registered by whoever runs it. It never borrows another
-client's pair: accounts that log in with a well-known client's identity from an unknown
-program get flagged.
+identifies a client program and is registered by the gateway operator. Configure a pair
+registered for this client application.
 
 ## How a message travels
 
@@ -190,8 +188,9 @@ grant takes effect immediately on HTTP, WebSocket and webhooks.
 
 **Loopback only.** The API listens on `127.0.0.1` and never on another interface. There is
 no TLS because nothing leaves the machine except webhooks, which go to `https` URLs the user
-saw when approving the app (plain `http` is accepted only for loopback URLs). There are no
-CORS headers, so web pages cannot call the API.
+saw when approving the app (plain `http` is accepted only for loopback URLs). The API does
+not provide Cross-Origin Resource Sharing (CORS) headers for browser clients. This is not
+an authentication boundary; tokens and grants control access to protected endpoints.
 
 **Every request carries a token**, except the health check and the two endpoints an app
 uses to ask for access. Any local process can connect to the port; what it can do depends

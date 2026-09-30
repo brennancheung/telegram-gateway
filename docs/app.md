@@ -1,13 +1,12 @@
 # The menu bar app
 
-Telegram Gateway is a macOS menu bar app that sets up and looks after **the gateway**: the
-background service that signs in to your Telegram account and passes messages from the chats
-you choose to the apps you approve. You use it to connect the gateway to Telegram, pick the
-chats it monitors, and decide which apps may read them. The gateway keeps running when the
-menu bar app is closed.
+The Telegram Gateway menu bar app administers the background gateway service. It provides
+Telegram sign-in, monitored-chat selection, application approval, and service controls.
+A gateway managed by a **LaunchAgent**, a service macOS runs at login, continues running
+after the menu bar app quits. A gateway started with **Run inside this app** stops with the app.
 
-In this document, "an app" always means a program that consumes the gateway (the thing that
-asks for access). The program described here is "the menu bar app" or "Telegram Gateway".
+In this document, an **app** is a program that consumes the gateway API and requests access
+to monitored chats. The program described here is "the menu bar app" or "Telegram Gateway".
 
 It has two surfaces:
 
@@ -29,21 +28,21 @@ It has two surfaces:
 
 ## First run
 
-The first time you launch Telegram Gateway, the window opens by itself and takes you through
-three steps. A quiet "Step 1 of 3" above each title shows where you are.
+On first launch, the setup window presents three numbered steps: connect, sign in, and
+choose chats.
 
 ### Before you start: an API ID and hash
 
 Telegram asks every program that connects to it to identify itself with an **API ID** (a
 number) and an **API hash** (32 characters, digits and the letters a–f). Together they are
-the program's key; they are not tied to your account and they are free.
+client-application credentials, separate from the account's login session.
 
 1. Go to https://my.telegram.org and log in with your phone number.
 2. Open **API development tools** and create an application. Any name works; choose the
    platform **Desktop**.
 3. Keep the page open: you need the **App api_id** and **App api_hash** it shows.
 
-Use your own pair. Reusing another program's key is a known way to get an account flagged.
+Use an API ID and hash registered for this client application.
 
 ### Step 1: Connect
 
@@ -52,9 +51,9 @@ link to my.telegram.org. Paste both values and click **Continue**.
 
 Continue saves the key and makes the gateway use it. If a gateway is already running — for
 example one you installed from the command line with `tgw daemon install` — it is told to
-reload its settings; otherwise the menu bar app starts one. You do not choose how; see
+reload its settings; otherwise the menu bar app starts one. See
 [How the gateway is started and kept running](#how-the-gateway-is-started-and-kept-running).
-The window moves on to sign-in only once Telegram is actually running in the gateway, which
+The window moves on to sign-in once the gateway has started its Telegram client, which
 takes a few seconds.
 
 macOS may show a notification that Telegram Gateway added an item that can run in the
@@ -535,8 +534,8 @@ greys prominent buttons in an inactive one.
 
 ### Checking screens with snapshots
 
-Nobody can click through a menu bar app in an automated check, so Debug builds can render
-every state of both surfaces to PNG files, light and dark:
+Debug builds provide snapshot mode for rendering screen states as PNG files in light and
+dark appearances:
 
 ```
 App/run.sh --no-launch                # or any Debug build
@@ -549,6 +548,13 @@ steps through the states with the fake gateway. It renders popover and sheet sta
 for window states it shows a real window and the script photographs it with
 `screencapture -l`, because an in-process render cannot see the sidebar. The terminal needs
 Screen Recording permission for that.
+
+Published screenshots belong in `docs/screenshots/` so documentation viewers can load them
+without accessing a parent directory. Capture them with the fake gateway, without `--live`.
+Use the sample account and chats in `FakeAPIClient`; the sign-in QR code must also come from
+the fake client's fixture tokens. Before publishing, inspect both appearances for account
+names, phone numbers, credentials, local usernames, notifications, and image metadata.
+Keep the light and dark variants paired in the documentation's `<picture>` elements.
 
 Windows that are not frontmost are drawn by macOS with grey controls. That is fine for
 checking layout. `--key` brings each window to the front so controls show their real colours;
