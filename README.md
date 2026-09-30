@@ -8,6 +8,19 @@ Telegram messages asks the gateway for access; you approve it, limit it to speci
 can revoke it with one click. Approved apps receive each new message as an event over
 WebSocket or webhooks.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="screenshots/06-chats-dark.png">
+    <img src="screenshots/06-chats.png" width="540" alt="The Chats window: the chats and folders the gateway monitors, each with a checkbox.">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="screenshots/08-app-approve-dark.png">
+    <img src="screenshots/08-app-approve.png" width="300" alt="Approving an app: tick which chats it may read and what it may read in them.">
+  </picture>
+  <br>
+  <sub>Left: you choose which chats the gateway watches. Right: an app asks for access and you decide exactly what it gets.</sub>
+</p>
+
 ![Telegram connects through TDLib to the gateway, a background service on your Mac. The menu bar app and tgw sign in, choose chats and approve apps. Your apps receive events over WebSocket, webhooks or HTTP.](docs/images/overview.svg)
 
 ## Why
@@ -55,7 +68,7 @@ works, what is unverified, and what is planned.
 git clone https://github.com/brennancheung/telegram-gateway.git
 cd telegram-gateway
 
-./vendor/tdlib/build.sh          # builds TDLib from source (about 2 minutes)
+./vendor/tdlib/build.sh          # builds TDLib from source (about 02:00)
 swift build                      # the gateway and the tgw command-line tool
 .build/debug/tgw daemon install  # starts the gateway now and at every login
 App/run.sh                       # builds and opens the menu bar app
@@ -68,6 +81,9 @@ The app opens a window and walks you through three steps:
    Desktop Device), or use your phone number. The gateway appears in your device list like
    any other Telegram client, and you can end its session from there at any time.
 3. **Choose chats** — tick the channels, groups or folders to monitor.
+
+[docs/getting-started.md](docs/getting-started.md) walks through every step with
+screenshots, from getting the API key to reading your first events.
 
 After that the app lives in the menu bar. It shows the gateway's state and anything that
 needs you, such as an app asking for access. [docs/app.md](docs/app.md) covers every screen.
@@ -117,6 +133,7 @@ consumer.
 
 | If you want to… | Read |
 |---|---|
+| Set it up, step by step | [docs/getting-started.md](docs/getting-started.md) |
 | Use the menu bar app | [docs/app.md](docs/app.md) |
 | Build an app that receives messages | [docs/integrating.md](docs/integrating.md) |
 | Look up an endpoint | [docs/api.md](docs/api.md) |
@@ -163,6 +180,7 @@ App/                the menu bar app (Xcode project)
 vendor/tdlib/       build script and pinned commit for TDLib
 launchd/            LaunchAgent template
 docs/               documentation
+screenshots/        the menu bar app, light and dark, from its sample data
 ```
 
 ## Contributing

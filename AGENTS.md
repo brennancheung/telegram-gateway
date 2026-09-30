@@ -2,7 +2,8 @@
 
 Instructions for coding agents and human contributors alike.
 
-Read `README.md` first, then `docs/architecture.md`. To build, test and run:
+Read `README.md` first, then `docs/architecture.md`. `docs/getting-started.md` is the
+walkthrough for someone setting it up. To build, test and run:
 `docs/development.md`. The contract apps rely on is `docs/api.md`, `docs/events.md` and
 `docs/grants.md`. `docs/status.md` says what works and what is planned.
 
