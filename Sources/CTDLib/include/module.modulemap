@@ -1,0 +1,4 @@
+module CTDLib {
+    header "CTDLib.h"
+    export *
+}
