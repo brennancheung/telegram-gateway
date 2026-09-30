@@ -17,7 +17,7 @@ Updated: 2026-09-29
 - `tgw` direct commands — `login` (QR or `--phone`), `whoami`, `chats`, `watch`, `logout`.
 
 **Daemon** (build order step 2). Everything below builds with `swift build`, passes
-`swift test` (107 tests in 20 suites, 0.5s of test time, no account and no network needed) and the
+`swift test` (108 tests in 21 suites, 0.5s of test time, no account and no network needed) and the
 daemon has been run against its own API with `curl` and `tgw` on a machine without
 `api_id`/`api_hash`. Nothing has talked to Telegram yet.
 
@@ -35,19 +35,21 @@ daemon has been run against its own API with `curl` and `tgw` on a machine witho
   in-flight re-send after restart), `MediaCache` (download through TDLib, poll for completion,
   LRU eviction, index in the store), `RateLimiter`, `TelegramSession` (the daemon's TDLib
   owner: parameters, `online=false`, login steps, re-creates the client after `logOut`),
-  `InstanceLock`, `Keychain`, `Config`, `Paths`, `JSONValue`, `GatewayClient`.
+  `InstanceLock`, `SecretStore` (file by default, Keychain opt-in, memory for tests), `Config`,
+  `Paths`, `JSONValue`, `GatewayClient`.
 - `GatewayServer` — every route in docs/api.md's endpoint index on Hummingbird 2: the error
   JSON shape, `X-TGW-Request-Id`, per-token rate limits with `X-RateLimit-*` and `429`,
   access-request throttles, admin login endpoints, media with `Range` and `202` while
   downloading, the WebSocket stream with backlog, `caught_up`, heartbeat, all close codes, and
   `1001` on shutdown.
 - `GatewayDaemon` — the executable: `TGW_HOME`/`config.json`/`TGW_PORT`, admin token in the
-  Keychain on first run, lock file, stderr logging with `--verbose`, clean shutdown on
+  secret store on first run (`secrets.json`; Keychain only when configured), lock file, stderr logging with `--verbose`, clean shutdown on
   SIGTERM/SIGINT (WebSockets `1001`, server drained, TDLib closed), hourly housekeeping and
   `events_retention_days`. Runs without credentials in a store-only mode.
 - `tgw` daemon-backed commands — `daemon install|uninstall|status|logs` (LaunchAgent from
   `launchd/…plist`), `health`, `monitor list|add|remove|folders`, `requests
-  list|approve|deny`, `grants list|show|revoke|resume-webhook`, `events tail|page`. The direct
+  list|approve|deny`, `grants list|show|revoke|resume-webhook`, `events tail|page`, `secrets
+  show|regenerate-admin-token|import-keychain`. The direct
   commands refuse to run while the daemon holds the lock.
 - `GatewayTestSupport` — `FakeTDLib` (scripted from fixtures), `Fixtures` (TDLib objects with
   the field names in `td_api.tl`), `FakeWebhookClient`, `FakeTelegram`, `ManualClock`.
@@ -95,6 +97,11 @@ Everything on the TDLib edge was written from the schema, not observed:
   triggers the backfill).
 
 ## Open questions
+
+- Secrets from the foundation step (`tdlib-db-key`) and from the daemon's first smoke run
+  (`admin-token`) are still in the login Keychain; nothing reads them any more. Reading them
+  from a fresh build would prompt, so they were not migrated. `tgw secrets import-keychain`
+  does it on request; otherwise log in again and the file store is populated from scratch.
 
 - The webhook secret is stored in plain text in `gateway.sqlite` because the gateway must
   sign with it; the token appears in `access_requests` for its `10:00` hand-out window and is

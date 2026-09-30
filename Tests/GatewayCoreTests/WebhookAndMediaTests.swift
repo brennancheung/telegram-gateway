@@ -371,3 +371,34 @@ import Testing
         withExtendedLifetime(lock) {}
     }
 }
+
+@Suite struct SecretStoreTests {
+    @Test func fileStoreRoundTripsWithOwnerOnlyPermissions() throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "tgw-secrets-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = Paths(home: home)
+        let store = FileSecretStore(path: paths.secrets)
+        #expect(try store.read("admin-token") == nil)
+        let key = try Secrets.databaseKey(store)
+        let keyAgain = try Secrets.databaseKey(store)
+        #expect(key.count == 32 && keyAgain == key)
+        let token = try Secrets.adminToken(store)
+        let existing = try Secrets.existingAdminToken(store)
+        #expect(Identifiers.looksLikeToken(token) && existing == token)
+        let permissions = try FileManager.default.attributesOfItem(atPath: paths.secrets.path)[.posixPermissions] as? Int
+        #expect(permissions == 0o600)
+        let regenerated = try Secrets.regenerateAdminToken(store)
+        let reread = try Secrets.adminToken(FileSecretStore(path: paths.secrets))
+        #expect(regenerated != token && reread == regenerated)
+        try store.delete("admin-token")
+        #expect(try Secrets.existingAdminToken(store) == nil)
+        let memory = MemorySecretStore()
+        #expect(try Secrets.migrate(from: store, to: memory) == ["tdlib-db-key"])
+        #expect(try memory.read("tdlib-db-key") == key)
+        #expect(try Config.load(paths: paths, environment: [:]).secrets == .file)
+        try Data(#"{"secrets": "keychain", "daemon_path": "/x"}"#.utf8).write(to: paths.config)
+        #expect(try Config.load(paths: paths, environment: [:]).secrets == .keychain)
+        try Data(#"{"secrets": "vault"}"#.utf8).write(to: paths.config)
+        #expect(throws: GatewayError.self) { try Config.load(paths: paths, environment: [:]) }
+    }
+}

@@ -123,6 +123,8 @@ enum AuthState: String, LenientStringEnum, Hashable {
     /// docs/api.md's list yet; the app handles them because TDLib has these states.
     case waitEmailAddress = "wait_email_address"
     case waitEmailCode = "wait_email_code"
+    /// The phone number has no Telegram account. The gateway never registers one.
+    case waitRegistration = "wait_registration"
     case ready
     case loggingOut = "logging_out"
     case closed
@@ -138,6 +140,7 @@ enum AuthState: String, LenientStringEnum, Hashable {
         case .waitPassword: "Waiting for 2FA password"
         case .waitEmailAddress: "Waiting for e-mail address"
         case .waitEmailCode: "Waiting for e-mail code"
+        case .waitRegistration: "No account for this number"
         case .ready: "Logged in"
         case .loggingOut: "Logging out"
         case .closed: "Closed"
@@ -212,6 +215,8 @@ struct AdminStatus: Decodable, Hashable, Sendable {
     var grantCount: Int
     var webhooks: WebhookCounts
     var eventsLastHour: Int
+    /// Since local midnight. Optional because it arrived after the first api.md.
+    var eventsToday: Int?
     var oldestSeq: Int?
     var mediaCacheBytes: Int
     var backfill: BackfillStatus

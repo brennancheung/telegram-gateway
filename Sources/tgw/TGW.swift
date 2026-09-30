@@ -17,7 +17,7 @@ struct TGW: AsyncParsableCommand {
             commands refuse to run while the daemon holds TDLib.
             """,
         subcommands: [
-            DaemonCommand.self, Health.self, MonitorCommand.self, RequestsCommand.self, GrantsCommand.self, EventsCommand.self,
+            DaemonCommand.self, Health.self, MonitorCommand.self, RequestsCommand.self, GrantsCommand.self, EventsCommand.self, SecretsCommand.self,
             Login.self, Whoami.self, Chats.self, Watch.self, Logout.self,
         ]
     )

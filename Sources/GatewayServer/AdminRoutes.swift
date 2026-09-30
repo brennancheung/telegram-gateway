@@ -28,6 +28,16 @@ struct AdminRoutes {
             let password = try body.requiredString("password")
             return try await authStep { try await deps.telegram.checkPassword(password) }
         }
+        group.post("/auth/email") { request, context in
+            let body = try await jsonBody(request, context)
+            let email = try body.requiredString("email_address")
+            return try await authStep { try await deps.telegram.setEmailAddress(email) }
+        }
+        group.post("/auth/email_code") { request, context in
+            let body = try await jsonBody(request, context)
+            let code = try body.requiredString("code")
+            return try await authStep { try await deps.telegram.checkEmailCode(code) }
+        }
         group.post("/auth/logout") { _, _ in try await authStep { try await deps.telegram.logOut() } }
         group.get("/access-requests") { request, _ in try await accessRequests(request) }
         group.post("/access-requests/:id/approve") { request, context in try await approve(request, context) }
@@ -67,6 +77,7 @@ struct AdminRoutes {
             "grant_count": .number(Double(grants.count)),
             "webhooks": ["active": .number(Double(webhooks["active"] ?? 0)), "retrying": .number(Double(webhooks["retrying"] ?? 0)), "paused": .number(Double(webhooks["paused"] ?? 0))],
             "events_last_hour": .number(Double(try await deps.store.eventCount(recordedAfter: deps.clock.now.addingTimeInterval(-3600)))),
+            "events_today": .number(Double(try await deps.store.eventCount(recordedAfter: Calendar.current.startOfDay(for: deps.clock.now)))),
             "oldest_seq": .optional(try await deps.eventLog.oldestSeq()),
             "media_cache_bytes": .number(Double(try await deps.mediaCache.cachedBytes())),
             "backfill": ["in_progress": .bool(backfill.inProgress), "chats_pending": .number(Double(backfill.chatsPending))],
@@ -77,10 +88,12 @@ struct AdminRoutes {
         let state = await deps.telegram.authState()
         var hint: JSONValue = .null
         if case .waitPassword(let h) = state, !h.isEmpty { hint = .string(h) }
+        let code = await deps.telegram.codeInfo()
         return json([
             "auth_state": .string(state?.apiName ?? "unknown"),
             "qr_link": .optional(await deps.telegram.qrLink()),
-            "phone_hint": .null,
+            "phone_hint": .optional(code?.phoneNumber.isEmpty == false ? code?.phoneNumber : nil),
+            "code_type": .optional(code?.type),
             "password_hint": hint,
         ])
     }

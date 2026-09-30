@@ -23,7 +23,8 @@ struct Session: Sendable {
         } catch let error as GatewayError {
             throw CLIError(error.description)
         }
-        let key = try Keychain.databaseKey()
+        let config = (try? Config.load(paths: paths)) ?? Config()
+        let key = try Secrets.databaseKey(Secrets.resolve(config: config, paths: paths))
         let parameters = TDLibParameters(
             apiId: credentials.apiId,
             apiHash: credentials.apiHash,

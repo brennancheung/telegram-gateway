@@ -38,7 +38,7 @@ public actor Grants {
         self.adminTokenHash = Identifiers.hash(adminToken)
     }
 
-    /// Replaces the admin token the daemon accepts (after `Keychain.regenerateAdminToken`).
+    /// Replaces the admin token the daemon accepts (after `Secrets.regenerateAdminToken`).
     public func setAdminToken(_ token: String) {
         adminTokenHash = Identifiers.hash(token)
     }

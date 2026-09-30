@@ -39,7 +39,7 @@ Sources/
   tgw/                 Command-line tool: administers the daemon; direct TDLib commands for development
 Tests/                 swift-testing suites (no account, no network)
 launchd/               LaunchAgent plist template (tgw daemon install)
-App/                   The SwiftUI menu bar app (Xcode project) — not started yet
+App/                   The SwiftUI menu bar app (Xcode project) — see docs/app.md
 vendor/tdlib/          Build script and pinned commit for libtdjson (built artifact is git-ignored)
 docs/                  All documentation — the contract for integrators and agents
 ```

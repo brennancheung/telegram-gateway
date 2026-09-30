@@ -8,10 +8,11 @@ enum Admin {
     static func client() throws -> GatewayClient {
         let paths = Paths.resolve()
         let config = try Config.load(paths: paths)
-        guard let token = try Keychain.existingAdminToken() else {
+        let secrets = Secrets.resolve(config: config, paths: paths)
+        guard let token = try Secrets.existingAdminToken(secrets) else {
             throw CLIError("""
-                no admin token in the Keychain (service \(Keychain.service), account \(Keychain.adminTokenAccount)). \
-                The daemon creates it on first run: install it with `tgw daemon install` or run GatewayDaemon once.
+                no admin token in \(secrets.description). The daemon creates it on first run: \
+                install it with `tgw daemon install` or run GatewayDaemon once.
                 """)
         }
         return GatewayClient(port: config.port, token: token)

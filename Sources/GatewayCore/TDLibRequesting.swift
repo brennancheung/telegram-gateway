@@ -49,7 +49,10 @@ extension AuthState {
     /// The `tdlib.auth_state` string (docs/api.md "Health").
     public var apiName: String {
         switch self {
-        case .waitPhoneNumber, .waitEmailAddress, .waitEmailCode, .waitRegistration, .waitPremiumPurchase: "wait_phone_number"
+        case .waitPhoneNumber, .waitPremiumPurchase: "wait_phone_number"
+        case .waitEmailAddress: "wait_email_address"
+        case .waitEmailCode: "wait_email_code"
+        case .waitRegistration: "wait_registration"
         case .waitOtherDeviceConfirmation: "wait_qr_confirmation"
         case .waitCode: "wait_code"
         case .waitPassword: "wait_password"

@@ -29,6 +29,8 @@ struct LoginView: View {
                     emailStep
                 case .waitEmailCode:
                     emailCodeStep
+                case .waitRegistration:
+                    registrationStep
                 case .ready:
                     ProgressView("Logged in, loading…")
                 case .loggingOut, .closed, .unknown:

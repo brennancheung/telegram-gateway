@@ -49,6 +49,9 @@ struct StatusView: View {
 
                 PanelSectionHeader(title: "Activity")
                 if let status = model.status {
+                    if let today = status.eventsToday {
+                        InfoRow("Events today", today.formatted())
+                    }
                     InfoRow("Events last hour", status.eventsLastHour.formatted())
                     InfoRow("Events total", status.headSeq.formatted())
                     InfoRow("Monitored chats", status.monitoredChatCount.formatted())

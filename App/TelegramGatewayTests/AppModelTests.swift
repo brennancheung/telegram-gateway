@@ -174,6 +174,10 @@ struct AppModelTests {
         #expect(try AdminToken.readFile(at: file) == nil)
         try Data(#"{"admin-token": " tgw_Kq8sT2xvY9bLm4nR7wZ1aC3dE5fG6hJ0iU2oP4rS8tV\n", "other": 1}"#.utf8).write(to: file)
         #expect(try AdminToken.readFile(at: file) == "tgw_Kq8sT2xvY9bLm4nR7wZ1aC3dE5fG6hJ0iU2oP4rS8tV")
+        // The daemon writes base64 of the UTF-8 token.
+        let base64 = Data("tgw_Kq8sT2xvY9bLm4nR7wZ1aC3dE5fG6hJ0iU2oP4rS8tV".utf8).base64EncodedString()
+        try Data(#"{"admin-token": "\#(base64)", "tdlib-db-key": "AAAA"}"#.utf8).write(to: file)
+        #expect(try AdminToken.readFile(at: file) == "tgw_Kq8sT2xvY9bLm4nR7wZ1aC3dE5fG6hJ0iU2oP4rS8tV")
         try Data(#"{"other": 1}"#.utf8).write(to: file)
         #expect(try AdminToken.readFile(at: file) == nil)
         try Data("[]".utf8).write(to: file)

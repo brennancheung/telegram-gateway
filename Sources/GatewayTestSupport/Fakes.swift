@@ -94,6 +94,18 @@ public actor FakeTelegram: TelegramControl {
     public func authState() -> AuthState? { state }
     public func connectionState() -> ConnectionState { connection }
     public func qrLink() -> String? { link }
+    public func codeInfo() -> CodeInfo? { state == .waitCode ? CodeInfo(type: "sms", phoneNumber: "+15551234567") : nil }
+
+    public func setEmailAddress(_ email: String) throws {
+        calls.append("email:\(email)")
+        state = .waitEmailCode
+    }
+
+    public func checkEmailCode(_ code: String) throws {
+        calls.append("emailcode:\(code)")
+        guard code == "777" else { throw APIError.invalidRequest("code", "wrong_code") }
+        state = .waitPassword(hint: "pet")
+    }
     public func account() -> AccountInfo? { accountInfo }
     public func requesting() -> (any TDLibRequesting)? { tdlib }
 

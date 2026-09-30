@@ -10,6 +10,7 @@ import Foundation
 ///   tdlib/           TDLib's own directory (td.binlog, db.sqlite, files/)
 ///   logs/            launchd stdout/stderr
 ///   daemon.lock      held (flock) by whichever process owns TDLib
+///   secrets.json     TDLib database key and admin token (file secret store, mode 0600)
 /// ```
 public struct Paths: Sendable, Equatable {
     public let home: URL
@@ -39,6 +40,8 @@ public struct Paths: Sendable, Equatable {
     public var database: URL { home.appending(path: "gateway.sqlite") }
     public var logs: URL { home.appending(path: "logs", directoryHint: .isDirectory) }
     public var lock: URL { home.appending(path: "daemon.lock") }
+    /// The file secret store (docs/development.md "Secrets").
+    public var secrets: URL { home.appending(path: "secrets.json") }
 
     /// Creates the data directories if they do not exist.
     public func prepare() throws {

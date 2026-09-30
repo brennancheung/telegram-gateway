@@ -78,7 +78,7 @@ If `swift build` fails with `'td/telegram/td_json_client.h' file not found`, ste
 run yet. The first `swift build` also fetches and compiles the Swift dependencies (Hummingbird,
 GRDB, NIO): about 03:00 on an M5 Max; incremental builds are seconds.
 
-Tests (`swift test`) take about 13s wall once built (the tests themselves run in 0.5s): 107 tests in 20 suites, all without an
+Tests (`swift test`) take about 13s wall once built (the tests themselves run in 0.5s): 108 tests in 21 suites, all without an
 account. They cover the store and migrations, the event log (paging, prune, `410`), grants
 (intersection with the monitored set, scope gating, revocation), access requests (expiry,
 approval, purge), the translator (a fixture per event type, hand-written from the TDLib
@@ -116,6 +116,7 @@ pair.
   tdlib/           TDLib's directory: td.binlog, db.sqlite (encrypted), files/ (downloads)
   logs/            daemon.out.log, daemon.err.log when run by launchd
   daemon.lock      flock held by the process that owns TDLib (the daemon, or a direct tgw command)
+  secrets.json     TDLib database key and admin token (file secret store, mode 0600)
 ```
 
 `config.json` (all keys optional):
@@ -125,6 +126,7 @@ pair.
   "port": 41414,
   "events_retention_days": null,
   "media_cache_max_bytes": 2147483648,
+  "secrets": "file",
   "api_id": 12345,
   "api_hash": "0123abcd…"
 }
@@ -133,13 +135,39 @@ pair.
 `TGW_PORT` overrides `port` for one process; `TGW_HOME` moves the whole directory (used to
 run a second, isolated gateway in development).
 
-Two items live in the **login Keychain** as generic passwords under service
-`TelegramGateway`:
+### Secrets: file store in development, Keychain in the shipped app, why
 
-| Account | Holds | Created by |
+The gateway has two secrets:
+
+| Key | Holds | Created by |
 |---|---|---|
-| `tdlib-db-key` | 32 random bytes TDLib encrypts `db.sqlite` with. Deleting it makes the local database unreadable; `tgw logout` then `tgw login` again is the recovery. | whichever process opens TDLib first |
+| `tdlib-db-key` | 32 random bytes TDLib encrypts `db.sqlite` with. Deleting it makes the local database unreadable; log in again is the recovery. | whichever process opens TDLib first |
 | `admin-token` | The admin token (`tgw_…`) the daemon accepts for `/v1/admin/*` and that `tgw` sends. | the daemon, on first run |
+
+They live in a **secret store** (`SecretStore` in GatewayCore) chosen by `config.json`:
+
+- `"secrets": "file"` (the default): `<TGW_HOME>/secrets.json`, `{ "<key>": "<base64>" }`,
+  mode `0600`, written atomically. Every `swift build` binary — `tgw`, `GatewayDaemon` —
+  uses this.
+- `"secrets": "keychain"`: generic passwords in the login Keychain, service
+  `TelegramGateway`, accounts as above. Only for the shipped menu bar app and the daemon it
+  bundles, which are signed with a stable identity.
+
+Why the split: macOS ties a Keychain item to the signing identity of the app that created
+it, and an ad-hoc-signed binary (what `swift build` produces) gets a new identity on every
+rebuild. Each read from a "new" app shows the owner a password prompt, so development
+builds and tests would prompt on every rebuild — which is exactly what happened before the
+file store existed. Rules that follow:
+
+- **Tests never call the Keychain.** They use `MemorySecretStore` (or a `FileSecretStore`
+  in a temporary directory).
+- **Development binaries never read the Keychain unless `config.json` says so.** Leave
+  `secrets` unset while developing.
+- `tgw secrets` shows which store is active and which keys exist (never the values);
+  `tgw secrets regenerate-admin-token` replaces the token; `tgw secrets import-keychain`
+  copies items an earlier build left in the Keychain into the file store — it is the one
+  command that does read the Keychain, so expect a prompt, and run it only if you want to
+  keep that login rather than logging in again.
 
 **One TDLib owner.** TDLib locks `td.binlog`; a second instance fails to start or corrupts
 the log. `daemon.lock` enforces this: the daemon holds it while running, a direct `tgw`
@@ -165,7 +193,8 @@ $ .build/debug/GatewayDaemon --verbose
 
 Logs go to stderr. Ctrl-C or SIGTERM stops it cleanly: open WebSockets get close code
 `1001`, the HTTP server drains, TDLib receives `close` and the daemon waits for `closed` so
-the binlog is flushed. On first run it generates the admin token into the Keychain.
+the binlog is flushed. On first run it generates the admin token into the secret store
+(`secrets.json` unless configured otherwise).
 
 What the daemon does once up: answers `waitTdlibParameters`, sets `online = false` when the
 login is ready, consumes TDLib updates through the translator into the event log for chats
@@ -381,7 +410,7 @@ Sources/CTDLib/            C module: module.modulemap + CTDLib.h including td_js
 Sources/TDLibClient/       actor TDLibClient, AuthState, TDLibParameters, TDLibError, Receiver
 Sources/QRCode/            QR encoder (byte mode, versions 1–40) and terminal rendering
 Sources/GatewayCore/       the domain, testable without an account:
-  Paths, Config, Keychain, InstanceLock, Identifiers, Clock (System/Manual), JSONValue, Models
+  Paths, Config, SecretStore (file / Keychain / memory), Keychain, InstanceLock, Identifiers, Clock (System/Manual), JSONValue, Models
   Store (GRDB, migrations), EventLog, Grants, AccessRequests, APIError
   TDLibRequesting (the protocol TDLib hides behind), Translator (TDLib JSON → events.md objects)
   Monitor (updates → log, cursors, backfill, folders), WebhookDispatcher, MediaCache, RateLimiter
@@ -417,11 +446,10 @@ retry ladder in tests without waiting.
   macOS refuses to load unsigned code; `build.sh` re-signs (`codesign --sign -`).
 - **Keychain prompts.** `tgw` and `GatewayDaemon` are ad-hoc signed by `swift build`, so each
   rebuilt binary is a different "application" to the Keychain, and the two binaries are
-  different applications from each other. Reading an item another build (or the other
-  binary) created may show a "wants to use your confidential information" dialog — click
-  Always Allow. Concretely: the daemon creates `admin-token`; the first `tgw health` after
-  that (and after each rebuild of `tgw`) prompts once. The signed menu bar app and daemon
-  will not have this problem.
+  different applications from each other. Reading an item another build created shows a
+  "wants to use your confidential information" dialog. That is why secrets live in
+  `secrets.json` in development (see "Secrets" above) and only the signed app opts into
+  the Keychain. `tgw secrets import-keychain` is the one development command that reads it.
 - **SwiftPM header layout.** SwiftPM rejects an umbrella header with a directory next to it,
   which is why `Sources/CTDLib/include` carries an explicit `module.modulemap`.
 - **`[String: Any]` under Swift 6.** JSON objects are not `Sendable`; the library returns

@@ -20,6 +20,33 @@ public struct AccountInfo: Sendable, Equatable {
     }
 }
 
+/// Details of the `wait_code` state: which channel the code went through and to which number.
+public struct CodeInfo: Sendable, Equatable {
+    /// `sms`, `call`, `telegram_message`, `flash_call`, `missed_call`, `fragment`, `firebase`, or `unknown`.
+    public var type: String
+    public var phoneNumber: String
+
+    public init(type: String, phoneNumber: String) {
+        self.type = type
+        self.phoneNumber = phoneNumber
+    }
+
+    /// Decodes an `authenticationCodeInfo` object.
+    public init(object: JSONObject) {
+        phoneNumber = object.string("phone_number") ?? ""
+        switch object.object("type")?.type {
+        case "authenticationCodeTypeSms": type = "sms"
+        case "authenticationCodeTypeCall": type = "call"
+        case "authenticationCodeTypeTelegramMessage": type = "telegram_message"
+        case "authenticationCodeTypeFlashCall": type = "flash_call"
+        case "authenticationCodeTypeMissedCall": type = "missed_call"
+        case "authenticationCodeTypeFragment": type = "fragment"
+        case "authenticationCodeTypeFirebaseAndroid", "authenticationCodeTypeFirebaseIos": type = "firebase"
+        default: type = "unknown"
+        }
+    }
+}
+
 /// What the API needs from the Telegram side: login state and the login steps
 /// (docs/api.md "Admin: login"), connection state, the account, and a request handle for
 /// history and media. `TelegramSession` is the real one; tests use a fake.
@@ -28,10 +55,14 @@ public protocol TelegramControl: Sendable {
     func connectionState() async -> ConnectionState
     /// The `tg://login?token=…` link while in `wait_qr_confirmation`.
     func qrLink() async -> String?
+    /// Set while in `wait_code`.
+    func codeInfo() async -> CodeInfo?
     func requestQr() async throws
     func setPhoneNumber(_ phone: String) async throws
     func checkCode(_ code: String) async throws
     func checkPassword(_ password: String) async throws
+    func setEmailAddress(_ email: String) async throws
+    func checkEmailCode(_ code: String) async throws
     func logOut() async throws
     func account() async -> AccountInfo?
     /// nil when TDLib is not running (no credentials configured).
@@ -76,6 +107,7 @@ public actor TelegramSession: TelegramControl {
     private var client: TDLibClient?
     private var pump: Task<Void, Never>?
     private var currentAuthState: AuthState?
+    private var currentCodeInfo: CodeInfo?
     private var currentConnectionState: ConnectionState = .connecting
     private var cachedAccount: AccountInfo?
     private var shuttingDown = false
@@ -122,6 +154,7 @@ public actor TelegramSession: TelegramControl {
             guard let stateObject = update.object("authorization_state") else { break }
             let state = AuthState(object: stateObject)
             currentAuthState = state
+            currentCodeInfo = stateObject.object("code_info").map(CodeInfo.init(object:))
             switch state {
             case .waitTdlibParameters:
                 _ = try? await client?.send(parameters.request)
@@ -164,6 +197,16 @@ public actor TelegramSession: TelegramControl {
     public func connectionState() -> ConnectionState { currentConnectionState }
     public func account() -> AccountInfo? { cachedAccount }
     public func requesting() -> (any TDLibRequesting)? { client }
+
+    public func codeInfo() -> CodeInfo? { currentCodeInfo }
+
+    public func setEmailAddress(_ email: String) async throws {
+        try await authRequest("setAuthenticationEmailAddress", ["email_address": email], field: "email_address")
+    }
+
+    public func checkEmailCode(_ code: String) async throws {
+        try await authRequest("checkAuthenticationEmailCode", ["code": ["@type": "emailAddressAuthenticationCode", "code": code]], field: "code", wrongReason: "wrong_code")
+    }
 
     public func qrLink() -> String? {
         if case .waitOtherDeviceConfirmation(let link) = currentAuthState { return link }
@@ -226,6 +269,9 @@ public struct NoTelegram: TelegramControl, TDLibRequesting {
     public func authState() async -> AuthState? { nil }
     public func connectionState() async -> ConnectionState { .waitingForNetwork }
     public func qrLink() async -> String? { nil }
+    public func codeInfo() async -> CodeInfo? { nil }
+    public func setEmailAddress(_ email: String) async throws { throw NoTelegram.error }
+    public func checkEmailCode(_ code: String) async throws { throw NoTelegram.error }
     public func requestQr() async throws { throw NoTelegram.error }
     public func setPhoneNumber(_ phone: String) async throws { throw NoTelegram.error }
     public func checkCode(_ code: String) async throws { throw NoTelegram.error }

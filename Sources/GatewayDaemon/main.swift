@@ -51,7 +51,8 @@ struct GatewayDaemonCommand: AsyncParsableCommand {
         }
         defer { withExtendedLifetime(lock) {} }
 
-        let adminToken = try Keychain.adminToken()
+        let secrets = Secrets.resolve(config: config, paths: paths)
+        let adminToken = try Secrets.adminToken(secrets)
         let store = try Store.open(paths: paths)
         let clock = SystemClock()
         let startedAt = clock.now
@@ -64,7 +65,7 @@ struct GatewayDaemonCommand: AsyncParsableCommand {
         if let apiId = config.apiId, let apiHash = config.apiHash, config.hasCredentials {
             let parameters = TDLibParameters(
                 apiId: apiId, apiHash: apiHash, databaseDirectory: paths.tdlib.path, filesDirectory: paths.tdlibFiles.path,
-                databaseEncryptionKey: try Keychain.databaseKey(), applicationVersion: GatewayDaemonCommand.version
+                databaseEncryptionKey: try Secrets.databaseKey(secrets), applicationVersion: GatewayDaemonCommand.version
             )
             let s = TelegramSession(parameters: parameters, logger: Logger(label: "telegram"))
             session = s
@@ -130,7 +131,7 @@ struct GatewayDaemonCommand: AsyncParsableCommand {
                 await group.triggerGracefulShutdown()
             }
         }
-        logger.info("Telegram Gateway \(GatewayDaemonCommand.version) listening on http://127.0.0.1:\(config.port), data in \(paths.home.path)")
+        logger.info("Telegram Gateway \(GatewayDaemonCommand.version) listening on http://127.0.0.1:\(config.port), data in \(paths.home.path), secrets in \(secrets.description)")
         try await group.run()
 
         housekeeping.cancel()

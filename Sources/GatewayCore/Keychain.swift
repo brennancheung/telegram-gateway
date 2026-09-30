@@ -1,56 +1,12 @@
 import Foundation
 import Security
 
-/// The gateway's secrets in the login Keychain, as generic passwords under service
-/// `TelegramGateway`:
-///
-/// | Account | Holds |
-/// |---|---|
-/// | `tdlib-db-key` | 32 random bytes TDLib encrypts its database with. Losing it means a fresh login. |
-/// | `admin-token` | The one admin token (docs/api.md "Authentication"). The daemon creates it on first run. |
-///
-/// The daemon runs as a LaunchAgent (the owner's user), which is what makes the login
-/// Keychain reachable.
+/// Raw access to the login Keychain (generic passwords under service `TelegramGateway`).
+/// Only `KeychainSecretStore` uses it, and only when config.json opts in — see `SecretStore`.
+/// Every read of an item another signed identity created prompts the owner, which is why
+/// development binaries and tests never come here.
 public enum Keychain {
     public static let service = "TelegramGateway"
-    public static let databaseKeyAccount = "tdlib-db-key"
-    public static let adminTokenAccount = "admin-token"
-
-    /// The database key, generated on first use.
-    public static func databaseKey() throws -> Data {
-        if let existing = try read(account: databaseKeyAccount) {
-            guard existing.count == 32 else {
-                throw GatewayError.keychain("Keychain item \(service)/\(databaseKeyAccount) is not a 32-byte key")
-            }
-            return existing
-        }
-        let key = Identifiers.randomBytes(32)
-        try write(account: databaseKeyAccount, data: key, label: "Telegram Gateway TDLib database key")
-        return key
-    }
-
-    /// The admin token, generated on first use.
-    public static func adminToken() throws -> String {
-        if let existing = try read(account: adminTokenAccount), let token = String(data: existing, encoding: .utf8) {
-            return token
-        }
-        return try regenerateAdminToken()
-    }
-
-    /// The admin token if one exists, without creating it (for `tgw`, which must never mint one).
-    public static func existingAdminToken() throws -> String? {
-        guard let data = try read(account: adminTokenAccount) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    /// Replaces the admin token. The old one stops working once the daemon reloads it.
-    @discardableResult
-    public static func regenerateAdminToken() throws -> String {
-        let token = Identifiers.token()
-        try delete(account: adminTokenAccount)
-        try write(account: adminTokenAccount, data: Data(token.utf8), label: "Telegram Gateway admin token")
-        return token
-    }
 
     // MARK: Generic access
 

@@ -53,9 +53,21 @@ enum AdminToken {
             throw ReadError.notAnObject(url)
         }
         guard let value = object[key] else { return nil }
-        guard let token = value as? String else { throw ReadError.notText }
-        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        guard let stored = value as? String else { throw ReadError.notText }
+        return decodeStored(stored)
+    }
+
+    /// The daemon stores the token base64-encoded (UTF-8 bytes). A raw `tgw_…` value is
+    /// accepted too, so a hand-written file works.
+    static func decodeStored(_ stored: String) -> String? {
+        let trimmed = stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.hasPrefix("tgw_") { return trimmed }
+        if let data = Data(base64Encoded: trimmed), let token = String(data: data, encoding: .utf8) {
+            let decoded = token.trimmingCharacters(in: .whitespacesAndNewlines)
+            return decoded.isEmpty ? nil : decoded
+        }
+        return trimmed
     }
 
     /// Opt-in only (see the type comment). Prompts on every rebuilt ad-hoc binary.

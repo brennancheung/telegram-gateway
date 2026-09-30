@@ -330,6 +330,7 @@ extension TestClientProtocol {
             #expect(try await client.call(.delete, "/v1/admin/grants/grant_missing", token: App.adminToken).status == 404)
             let status = try await client.call(.get, "/v1/admin/status", token: App.adminToken)
             #expect(status.json["monitored_chat_count"] == 2 && status.json["grant_count"] == 0 && status.json["backfill"] == ["in_progress": false, "chats_pending": 0])
+            #expect(status.json["events_today"] == status.json["head_seq"] && status.json["events_last_hour"] == status.json["head_seq"])
         }
     }
 
@@ -344,7 +345,7 @@ extension TestClientProtocol {
             let badPhone = try await client.call(.post, "/v1/admin/auth/phone", token: App.adminToken, body: ["phone_number": "555"])
             #expect(badPhone.status == 400 && badPhone.json["error"]?["details"]?["field"] == "phone_number")
             let phone = try await client.call(.post, "/v1/admin/auth/phone", token: App.adminToken, body: ["phone_number": "+15551234567"])
-            #expect(phone.json["auth_state"] == "wait_code")
+            #expect(phone.json["auth_state"] == "wait_code" && phone.json["code_type"] == "sms" && phone.json["phone_hint"] == "+15551234567")
             let wrongCode = try await client.call(.post, "/v1/admin/auth/code", token: App.adminToken, body: ["code": "00000"])
             #expect(wrongCode.status == 400 && wrongCode.json["error"]?["details"]?["reason"] == "wrong_code")
             let code = try await client.call(.post, "/v1/admin/auth/code", token: App.adminToken, body: ["code": "12345"])
@@ -354,8 +355,15 @@ extension TestClientProtocol {
             let password = try await client.call(.post, "/v1/admin/auth/password", token: App.adminToken, body: ["password": "hunter2"])
             #expect(password.json["auth_state"] == "ready")
             let logout = try await client.call(.post, "/v1/admin/auth/logout", token: App.adminToken)
-            #expect(logout.json["auth_state"] == "wait_phone_number")
-            #expect(await app.telegram.calls == ["qr", "phone:555", "phone:+15551234567", "code:00000", "code:12345", "password", "password", "logout"])
+            #expect(logout.json["auth_state"] == "wait_phone_number" && logout.json["code_type"] == .null)
+            await app.telegram.set(state: .waitEmailAddress)
+            #expect(try await client.call(.get, "/v1/admin/auth", token: App.adminToken).json["auth_state"] == "wait_email_address")
+            let email = try await client.call(.post, "/v1/admin/auth/email", token: App.adminToken, body: ["email_address": "me@example.com"])
+            #expect(email.json["auth_state"] == "wait_email_code")
+            let wrongEmailCode = try await client.call(.post, "/v1/admin/auth/email_code", token: App.adminToken, body: ["code": "000"])
+            #expect(wrongEmailCode.status == 400 && wrongEmailCode.json["error"]?["details"]?["reason"] == "wrong_code")
+            #expect(try await client.call(.post, "/v1/admin/auth/email_code", token: App.adminToken, body: ["code": "777"]).json["auth_state"] == "wait_password")
+            #expect(await app.telegram.calls == ["qr", "phone:555", "phone:+15551234567", "code:00000", "code:12345", "password", "password", "logout", "email:me@example.com", "emailcode:000", "emailcode:777"])
         }
     }
 }

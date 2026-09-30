@@ -13,19 +13,23 @@ public struct Config: Sendable, Equatable {
     /// This application's identity with Telegram, from https://my.telegram.org. Both or neither.
     public var apiId: Int32?
     public var apiHash: String?
+    /// Where secrets live: the file store (default) or the login Keychain (shipped app only).
+    public var secrets: SecretsBackend
 
     public init(
         port: Int = Config.defaultPort,
         eventsRetentionDays: Int? = nil,
         mediaCacheMaxBytes: Int64 = Config.defaultMediaCacheMaxBytes,
         apiId: Int32? = nil,
-        apiHash: String? = nil
+        apiHash: String? = nil,
+        secrets: SecretsBackend = .file
     ) {
         self.port = port
         self.eventsRetentionDays = eventsRetentionDays
         self.mediaCacheMaxBytes = mediaCacheMaxBytes
         self.apiId = apiId
         self.apiHash = apiHash
+        self.secrets = secrets
     }
 
     /// True when both `api_id` and `api_hash` are present.
@@ -59,6 +63,13 @@ public struct Config: Sendable, Equatable {
             default: break
             }
             if let hash = fields["api_hash"]?.stringValue, !hash.isEmpty { config.apiHash = hash }
+            if let raw = fields["secrets"], raw != .null {
+                guard let backend = raw.stringValue.flatMap(SecretsBackend.init(rawValue:)) else {
+                    throw GatewayError.invalidConfig("secrets must be \"file\" or \"keychain\"")
+                }
+                config.secrets = backend
+            }
+            // Other keys (the menu bar app's daemon_path, for one) are left alone.
         }
         if let s = environment["TGW_PORT"], let port = Int(s) { config.port = port }
         if let s = environment["TGW_API_ID"], let id = Int32(s) { config.apiId = id }
