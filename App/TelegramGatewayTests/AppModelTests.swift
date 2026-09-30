@@ -83,6 +83,102 @@ struct AppModelTests {
         #expect(down.hero.tone == .failed)
         #expect(down.hero.title == "Gateway not running")
         #expect(down.hero.action == .startGateway)
+
+        let signedOut = AppModel.preview(.waitingForQR)
+        await signedOut.refresh()
+        #expect(signedOut.hero.tone == .attention)
+        #expect(signedOut.hero.title == "Not signed in")
+
+        let fresh = AppModel.preview(.unreachable, credentials: false, onboarded: false)
+        await fresh.refresh()
+        #expect(fresh.hero.title == "Not set up yet")
+
+        let noKey = AppModel.preview(.loggedIn, token: false)
+        await noKey.refresh()
+        #expect(noKey.hero.tone == .failed)
+        #expect(noKey.hero.title == "Can't control the gateway")
+    }
+
+    // MARK: The window
+
+    @Test("The window opens by itself when setup or sign-in is needed, once per occurrence")
+    func windowOpensWhenNeeded() async {
+        let fine = AppModel.preview(.loggedIn)
+        await fine.refresh()
+        #expect(fine.windowRequests == 0)
+        #expect(fine.showsSidebar)
+
+        let firstRun = AppModel.preview(.unreachable, credentials: false, onboarded: false)
+        await firstRun.refresh()
+        #expect(firstRun.windowRequests == 1)
+        #expect(!firstRun.showsSidebar)
+        // The owner may close it; it does not pop up again for the same need.
+        await firstRun.refresh()
+        #expect(firstRun.windowRequests == 1)
+
+        let signedOut = AppModel.preview(.loggedOut, has2FA: false)
+        await signedOut.refresh()
+        #expect(signedOut.windowRequests == 1)
+        signedOut.loginMode = .phone
+        await signedOut.submitPhone("+15551234567")
+        await signedOut.submitCode("12345")
+        #expect(signedOut.screen == .main)
+        #expect(signedOut.windowRequests == 1)
+        // Signed out again later: a new occurrence, so the window comes back.
+        await signedOut.logout()
+        #expect(signedOut.screen == .login)
+        #expect(signedOut.windowRequests == 2)
+
+        // A gateway that is down does not force the window open; the popover says so.
+        let down = AppModel.preview(.unreachable)
+        await down.refresh()
+        #expect(down.windowRequests == 0)
+        #expect(down.showsSidebar)
+    }
+
+    @Test("A Needs-you row opens the window at the right place")
+    func openFromPopover() async throws {
+        let model = AppModel.preview(.loggedIn)
+        await model.refresh()
+        await model.loadChats()
+        let paused = try #require(model.grants.first { $0.webhook?.state == .paused })
+        model.open(.webhook(paused))
+        #expect(model.windowRequests == 1)
+        #expect(model.section == .apps)
+        #expect(model.selectedApp == .grant(paused.id))
+
+        model.open(.chooseChats)
+        #expect(model.section == .chats)
+        model.open(.startGateway)
+        #expect(model.section == .overview)
+        #expect(model.windowRequests == 3)
+
+        let request = model.requests[0]
+        model.open(.request(request))
+        #expect(model.section == .apps)
+        #expect(model.selectedApp == .request(request.requestId))
+        // The review sheet opens once the chats are there.
+        for _ in 0..<50 where model.approval == nil { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(model.approval?.request.requestId == request.requestId)
+
+        model.requestWindow()
+        #expect(model.windowRequests == 5)
+    }
+
+    @Test("Apps selection: oldest request first, kept while it exists")
+    func appSelection() async {
+        let model = AppModel.preview(.loggedIn)
+        await model.refresh()
+        await model.loadAccess()
+        model.normalizeAppSelection()
+        #expect(model.selectedApp == .request(model.requests[0].requestId))
+        model.selectedApp = .grant(model.grants[1].id)
+        model.normalizeAppSelection()
+        #expect(model.selectedApp == .grant(model.grants[1].id))
+        await model.deny(model.requests[0])
+        model.selectedApp = .request("gone")
+        model.normalizeAppSelection()
+        #expect(model.selectedApp == .grant(model.grants[0].id))
     }
 
     @Test("Needs you: pending requests and stopped deliveries, nothing when all is fine")
@@ -90,6 +186,9 @@ struct AppModelTests {
         let busy = AppModel.preview(.loggedIn)
         await busy.refresh()
         #expect(busy.needsYou.count == 2)
+        #expect(busy.needsYou == busy.appNeeds)
+        #expect(busy.needsYou.map(\.title) == ["Community Analytics wants access", "Archive: delivery paused"])
+        #expect(busy.needsYou[1].detail == "Connection refused")
         guard case .request(let request) = busy.needsYou[0], case .webhook(let grant) = busy.needsYou[1] else {
             Issue.record("expected a request then a webhook")
             return
@@ -102,6 +201,18 @@ struct AppModelTests {
         let quiet = AppModel.preview(.loggedInQuiet)
         await quiet.refresh()
         #expect(quiet.needsYou.isEmpty)
+
+        // Whatever keeps the gateway from working is itself something that needs the owner.
+        func needs(_ scenario: FakeAPIClient.Scenario, credentials: Bool = true, token: Bool = true, onboarded: Bool = true) async -> [NeedsItem] {
+            let model = AppModel.preview(scenario, credentials: credentials, token: token, onboarded: onboarded)
+            await model.refresh()
+            return model.needsYou
+        }
+        #expect(await needs(.unreachable, credentials: false, onboarded: false) == [.setUp])
+        #expect(await needs(.unreachable) == [.startGateway])
+        #expect(await needs(.loggedIn, token: false) == [.keyMissing])
+        #expect(await needs(.waitingForQR) == [.signIn])
+        #expect(await needs(.loggedInEmpty) == [.chooseChats])
         #expect(quiet.grants.allSatisfy { $0.state.tone == .ok })
         #expect(quiet.grants[1].summary == "1 chat · new messages")
         #expect(quiet.grants[0].summary == "Product folder · new messages, chat names")
@@ -164,7 +275,8 @@ struct AppModelTests {
         await model.submitPassword("hunter2")
         #expect(model.loginError == nil)
         #expect(model.screen == .main)
-        #expect(model.tab == .chats)
+        #expect(model.section == .chats)
+        #expect(model.showsSidebar)
         #expect(!model.onboardingDone)
     }
 
@@ -182,7 +294,7 @@ struct AppModelTests {
         #expect(model.loginError != nil)
         await model.submitCode("12345")
         #expect(model.screen == .main)
-        #expect(model.tab == .overview)
+        #expect(model.section == .overview)
         #expect(model.loginMode == .qr)
         await model.logout()
         #expect(model.screen == .login)
@@ -248,7 +360,6 @@ struct AppModelTests {
         await model.loadAccess()
         model.beginApproval(model.requests[0])
         let draft = try #require(model.approval)
-        #expect(model.overlay == .approve)
         #expect(draft.chatIds == ["-1001234567890", "-1001987654321", "-1003333333333"])
         #expect(draft.scopes == ["messages:read", "history:read", "chats:read"])
         #expect(model.approvalChatIds(draft) == ["-1001234567890", "-1001987654321", "-1003333333333"])
@@ -273,7 +384,6 @@ struct AppModelTests {
 
         model.cancelApproval()
         #expect(model.approval == nil)
-        #expect(model.overlay == nil)
         #expect(model.requests.count == 1)
     }
 
@@ -288,10 +398,12 @@ struct AppModelTests {
         model.approval?.scopes.remove("history:read")
         let ok = await model.approve()
         #expect(ok)
-        #expect(model.overlay == nil)
+        #expect(model.approval == nil)
         #expect(model.requests.isEmpty)
         #expect(model.grants.count == 3)
         let grant = model.grants.last
+        // The new app is what the Apps section shows next.
+        #expect(model.selectedApp == grant.map { .grant($0.id) })
         #expect(grant?.scopes == ["messages:read", "chats:read"])
         #expect(Set(grant?.effectiveChatIds ?? []) == ["-1001234567890", "-1003333333333"])
         #expect(grant?.webhook?.url == "https://analytics.example.com/tgw/events")
@@ -344,10 +456,10 @@ struct AppModelTests {
         await model.resumeWebhook(paused)
         #expect(model.grant(id: paused.id)?.webhook?.state == .active)
         #expect(model.needsYou.isEmpty)
-        model.overlay = .grant(paused.id)
+        model.selectedApp = .grant(paused.id)
         await model.revoke(paused)
         #expect(model.grants.count == 1)
-        #expect(model.overlay == nil)
+        #expect(model.selectedApp == nil)
     }
 
     // MARK: Files

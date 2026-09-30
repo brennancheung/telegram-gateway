@@ -37,17 +37,56 @@ struct ApprovalDraft: Equatable, Sendable {
     var showOtherChats = false
 }
 
-/// One thing on the Overview that is waiting for the owner.
+/// One thing that is waiting for the owner. The popover lists all of them; the window's
+/// Overview lists the app-related ones (the others are its hero's own action).
 enum NeedsItem: Identifiable, Equatable, Sendable {
+    case setUp
+    case startGateway
+    case keyMissing
+    case signIn
+    case chooseChats
     case request(AccessRequest)
     case webhook(Grant)
 
     var id: String {
         switch self {
+        case .setUp: "set-up"
+        case .startGateway: "start-gateway"
+        case .keyMissing: "key-missing"
+        case .signIn: "sign-in"
+        case .chooseChats: "choose-chats"
         case .request(let request): "request-\(request.requestId)"
         case .webhook(let grant): "webhook-\(grant.id)"
         }
     }
+
+    /// The row's one line, and a second line only where it adds a fact.
+    var title: String {
+        switch self {
+        case .setUp: "Set up Telegram Gateway"
+        case .startGateway: "Start the gateway"
+        case .keyMissing: "Restart the gateway"
+        case .signIn: "Sign in to Telegram"
+        case .chooseChats: "Choose chats to monitor"
+        case .request(let request): "\(request.name) wants access"
+        case .webhook(let grant): grant.webhook?.state == .paused ? "\(grant.app.name): delivery paused" : "\(grant.app.name): delivery failing"
+        }
+    }
+
+    var detail: String? {
+        switch self {
+        case .setUp, .startGateway, .keyMissing, .signIn, .chooseChats: nil
+        case .request(let request): Wording.timeLeft(until: request.expiresAt)
+        case .webhook(let grant):
+            grant.webhook?.lastError.map { grant.webhook?.state == .paused ? $0.capitalizedFirst : "Retrying · \($0)" }
+        }
+    }
+}
+
+/// What is selected in the Apps section of the window.
+enum AppSelection: Hashable, Sendable {
+    case request(String)
+    case grant(String)
 }
 
 /// Everything the menu bar UI shows, in one observable object. Views read it through the
@@ -72,23 +111,40 @@ final class AppModel {
         case main
     }
 
-    enum Tab: String, CaseIterable, Identifiable {
-        case overview, chats, apps
+    /// The main window's sidebar.
+    enum Section: String, CaseIterable, Identifiable {
+        case overview, chats, apps, gateway
         var id: String { rawValue }
         var title: String {
             switch self {
             case .overview: "Overview"
             case .chats: "Chats"
             case .apps: "Apps"
+            case .gateway: "Gateway"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .overview: "gauge.with.dots.needle.33percent"
+            case .chats: "bubble.left.and.bubble.right"
+            case .apps: "square.grid.2x2"
+            case .gateway: "server.rack"
             }
         }
     }
 
-    /// A screen opened on top of the current one.
-    enum Overlay: Equatable {
-        case details
-        case approve
-        case grant(String)
+    /// Which rows the Chats table shows.
+    enum ChatScope: String, CaseIterable, Identifiable {
+        case monitored, folders, all
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .monitored: "Monitored"
+            case .folders: "Folders"
+            case .all: "All"
+            }
+        }
     }
 
     enum StartPhase: Equatable {
@@ -167,9 +223,18 @@ final class AppModel {
     var approving = false
 
     // UI
-    var tab: Tab = .overview
-    var overlay: Overlay?
+    var section: Section = .overview
+    var selectedApp: AppSelection?
+    var chatScope: ChatScope = .all
+    var chatSearch = ""
+    /// The menu bar popover is showing.
     var isPanelOpen = false
+    /// The main window is showing.
+    var isWindowOpen = false
+    /// Incremented whenever the main window should be shown and brought to the front. The
+    /// menu bar scene observes it; nothing else opens the window.
+    private(set) var windowRequests = 0
+    private var neededOwner = false
 
     private var pollTask: Task<Void, Never>?
     private static let onboardingKey = "onboardingDone"
@@ -227,6 +292,9 @@ final class AppModel {
         return health.tdlib.authState.isLoggedIn ? .main : .login
     }
 
+    /// Setup and sign-in run as a focused flow; every other state has the sidebar.
+    var showsSidebar: Bool { screen == .main || screen == .gatewayDown || screen == .keyMissing }
+
     var authState: AuthState { auth?.authState ?? health?.tdlib.authState ?? .unknown }
     var isConnected: Bool { health?.tdlib.connectionState == .ready }
     var pendingRequestCount: Int { requests.count }
@@ -267,12 +335,24 @@ final class AppModel {
     }
 
     var hero: Hero {
-        guard reachable else {
+        switch screen {
+        case .loading:
+            return Hero(tone: .neutral, title: "Connecting…", detail: nil, action: nil)
+        case .connect:
+            if startPhase == .starting { return Hero(tone: .attention, title: "Starting the gateway…", detail: nil, action: nil) }
+            return Hero(tone: .attention, title: "Not set up yet", detail: "Connect the gateway to your Telegram account.", action: nil)
+        case .gatewayDown:
             if startPhase == .starting { return Hero(tone: .attention, title: "Starting the gateway…", detail: nil, action: nil) }
             return Hero(tone: .failed, title: "Gateway not running", detail: "Nothing is monitored until it starts.", action: .startGateway)
+        case .keyMissing:
+            return Hero(tone: .failed, title: "Can't control the gateway", detail: "The app can't read the gateway's access key.", action: nil)
+        case .login:
+            return Hero(tone: .attention, title: "Not signed in", detail: "Nothing is collected until you sign in to Telegram.", action: nil)
+        case .main:
+            break
         }
         guard isConnected else {
-            return Hero(tone: .attention, title: "Reconnecting to Telegram…", detail: "Messages sent meanwhile are collected once it is back.", action: nil)
+            return Hero(tone: .attention, title: "Reconnecting…", detail: "Telegram's connection dropped. Messages sent meanwhile are collected once it is back.", action: nil)
         }
         let count = status?.monitoredChatCount ?? monitoredCount
         guard count > 0 else {
@@ -285,9 +365,59 @@ final class AppModel {
         return Hero(tone: .neutral, title: "Monitoring \(Wording.count(count, "chat"))", detail: detail, action: nil)
     }
 
-    /// Pending requests, then webhooks that stopped or are failing.
-    var needsYou: [NeedsItem] {
+    /// Pending requests, then deliveries that stopped or are failing.
+    var appNeeds: [NeedsItem] {
         requests.map(NeedsItem.request) + grants.filter { $0.webhook?.state == .paused || $0.webhook?.state == .retrying }.map(NeedsItem.webhook)
+    }
+
+    /// Everything waiting for the owner, whatever state the gateway is in.
+    var needsYou: [NeedsItem] {
+        switch screen {
+        case .loading: []
+        case .connect: startPhase == .starting ? [] : [.setUp]
+        case .gatewayDown: startPhase == .starting ? [] : [.startGateway]
+        case .keyMissing: [.keyMissing]
+        case .login: [.signIn]
+        case .main: ((status?.monitoredChatCount ?? monitoredCount) == 0 ? [.chooseChats] : []) + appNeeds
+        }
+    }
+
+    // MARK: The window
+
+    /// Shows the main window and brings it to the front (or re-focuses it).
+    func requestWindow() {
+        windowRequests += 1
+    }
+
+    /// Opens the window at the place where the owner can deal with `item`.
+    func open(_ item: NeedsItem) {
+        switch item {
+        case .setUp, .signIn:
+            break
+        case .startGateway, .keyMissing:
+            section = .overview
+        case .chooseChats:
+            section = .chats
+        case .request(let request):
+            section = .apps
+            selectedApp = .request(request.requestId)
+            Task {
+                if chats.isEmpty { await loadChats() }
+                beginApproval(request)
+            }
+        case .webhook(let grant):
+            section = .apps
+            selectedApp = .grant(grant.id)
+        }
+        requestWindow()
+    }
+
+    /// Setup and sign-in cannot be done from the popover, so the window opens by itself when
+    /// either becomes necessary (once per occurrence: closing it is respected).
+    private func openWindowIfOwnerNeeded() {
+        let needed = initialised && (screen == .connect || screen == .login)
+        if needed, !neededOwner { requestWindow() }
+        neededOwner = needed
     }
 
     // MARK: Polling
@@ -303,7 +433,7 @@ final class AppModel {
             while !Task.isCancelled {
                 guard let self else { return }
                 await self.refresh()
-                let seconds: Double = self.isPanelOpen ? 5 : 15
+                let seconds: Double = self.isPanelOpen || self.isWindowOpen ? 5 : 15
                 try? await Task.sleep(for: .seconds(seconds))
             }
         }
@@ -324,6 +454,16 @@ final class AppModel {
         isPanelOpen = false
     }
 
+    func windowOpened() {
+        isWindowOpen = true
+        daemon.refreshAgentState()
+        Task { await refresh() }
+    }
+
+    func windowClosed() {
+        isWindowOpen = false
+    }
+
     /// One round: token, health, then status, requests and grants if signed in.
     func refresh() async {
         if !isPreview { loadToken() }
@@ -340,6 +480,7 @@ final class AppModel {
         defer {
             initialised = true
             lastRefresh = Date()
+            openWindowIfOwnerNeeded()
         }
         guard reachable, token != nil, let health else { return }
         if let auth, auth.authState.isLoggedIn != health.tdlib.authState.isLoggedIn { self.auth = nil }
@@ -544,7 +685,7 @@ final class AppModel {
     /// First sign-in lands on Chats, where step 3 is.
     private func didSignIn() {
         loginMode = .qr
-        if !onboardingDone { tab = .chats }
+        if !onboardingDone { section = .chats }
     }
 
     func logout() async {
@@ -557,7 +698,8 @@ final class AppModel {
             folders = []
             monitored = nil
             draft = MonitoredDraft()
-            overlay = nil
+            selectedApp = nil
+            approval = nil
             await refresh()
         } catch {
             lastError = error.localizedDescription
@@ -662,6 +804,18 @@ final class AppModel {
     }
 
     func grant(id: String) -> Grant? { grants.first { $0.id == id } }
+    func request(id: String) -> AccessRequest? { requests.first { $0.requestId == id } }
+
+    /// Keeps something selected in Apps: the current selection if it still exists, else the
+    /// oldest request, else the first app.
+    func normalizeAppSelection() {
+        switch selectedApp {
+        case .request(let id) where request(id: id) != nil: return
+        case .grant(let id) where grant(id: id) != nil: return
+        default: break
+        }
+        selectedApp = requests.first.map { .request($0.requestId) } ?? grants.first.map { .grant($0.id) }
+    }
 
     /// Opens the approval screen with the request's chats and permissions pre-ticked.
     func beginApproval(_ request: AccessRequest) {
@@ -672,7 +826,6 @@ final class AppModel {
             chatIds: Set(requested.isEmpty ? monitoredIds : requested),
             scopes: Set(request.scopes).subtracting(["messages:send"]))
         accessError = nil
-        overlay = .approve
     }
 
     /// The chats offered for a request: the ones it asked for, then (when expanded, or when
@@ -725,9 +878,9 @@ final class AppModel {
                 selection = .chats(draft.chatIds.sorted())
             }
             let scopes = Permission.sorted(draft.request.scopes.filter { draft.scopes.contains($0) })
-            _ = try await client.approve(requestId: draft.request.requestId, selection: selection, scopes: scopes)
+            let grant = try await client.approve(requestId: draft.request.requestId, selection: selection, scopes: scopes)
             approval = nil
-            overlay = nil
+            selectedApp = .grant(grant.id)
             await loadAccess()
             await refresh()
             return true
@@ -739,12 +892,12 @@ final class AppModel {
 
     func cancelApproval() {
         approval = nil
-        overlay = nil
     }
 
     func deny(_ request: AccessRequest) async {
         do {
             try await client.deny(requestId: request.requestId, reason: nil)
+            if selectedApp == .request(request.requestId) { selectedApp = nil }
             await loadAccess()
         } catch {
             accessError = error.localizedDescription
@@ -754,7 +907,7 @@ final class AppModel {
     func revoke(_ grant: Grant) async {
         do {
             try await client.revoke(grantId: grant.id)
-            overlay = nil
+            if selectedApp == .grant(grant.id) { selectedApp = nil }
             await loadAccess()
         } catch {
             accessError = error.localizedDescription

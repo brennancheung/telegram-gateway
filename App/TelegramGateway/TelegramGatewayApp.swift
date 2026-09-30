@@ -1,22 +1,23 @@
 import AppKit
 import SwiftUI
 
-/// The menu bar app. `LSUIElement` in Info.plist keeps it out of the Dock; `MenuBarExtra`
-/// with the `.window` style gives a popover-like panel under the menu bar icon.
+/// Two surfaces. The menu bar popover (`MenuBarExtra`, `.window` style) is for a glance and
+/// three actions. The main window (`Window` scene) is for everything with detail: setup,
+/// sign-in, Overview, Chats, Apps, Gateway. `LSUIElement` in Info.plist keeps the app out of
+/// the Dock until the window is open (see `WindowCoordinator`).
 @main
 struct TelegramGatewayApp: App {
+    static let mainWindowID = "main"
+
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model: AppModel
 
     init() {
-        // Under `xcodebuild test` the app is only a host for the test bundle: no secrets file
-        // reads, no polling, no launchd.
+        // Under `xcodebuild test` the app is only a host for the test bundle, and in a
+        // snapshot run it only renders fixtures: no secrets file, no polling, no launchd.
         let isTestHost = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
-        var inert = isTestHost
-        #if DEBUG
-        if SnapshotRunner.requestedDirectory != nil { inert = true }
-        #endif
+        let inert = isTestHost || SnapshotFlags.isSnapshotRun
         let model = inert ? AppModel.preview(.unreachable, credentials: false, token: false) : AppModel.live()
         _model = State(initialValue: model)
         if !inert { model.start() }
@@ -25,12 +26,59 @@ struct TelegramGatewayApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            RootView()
+            PopoverView()
                 .environment(model)
         } label: {
-            Image(nsImage: MenuBarIcon.image(pending: model.pendingRequestCount))
+            MenuBarLabel()
+                .environment(model)
         }
         .menuBarExtraStyle(.window)
+
+        Window("Telegram Gateway", id: Self.mainWindowID) {
+            MainWindowView()
+                .environment(model)
+        }
+        .defaultSize(width: PanelSize.window.width, height: PanelSize.window.height)
+        .windowResizability(.contentMinSize)
+        // The window opens when the owner asks for it, or when setup or sign-in is needed;
+        // never just because the app launched.
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
+        .commands { AppCommands(model: model) }
+    }
+}
+
+/// The menu bar icon. It is always alive, so it is also where requests to show the main
+/// window are carried out: `AppModel.requestWindow()` bumps a counter, this opens (or
+/// re-focuses) the one window.
+struct MenuBarLabel: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Image(nsImage: MenuBarIcon.image(pending: model.pendingRequestCount))
+            .onChange(of: model.windowRequests) { showWindow() }
+            .task { if model.windowRequests > 0 { showWindow() } }
+    }
+
+    private func showWindow() {
+        guard !SnapshotFlags.isSnapshotRun else { return }
+        openWindow(id: TelegramGatewayApp.mainWindowID)
+        WindowCoordinator.shared.focus()
+    }
+}
+
+/// Cmd-, re-focuses the main window (there is no separate settings window), and there is no
+/// "New Window": the app has exactly one.
+struct AppCommands: Commands {
+    let model: AppModel
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Open Telegram Gateway…") { model.requestWindow() }
+                .keyboardShortcut(",", modifiers: .command)
+        }
+        CommandGroup(replacing: .newItem) {}
     }
 }
 
@@ -48,9 +96,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #endif
     }
 
+    /// Closing the window never quits the app: it goes back to the menu bar.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
-        // A daemon started with "Run in foreground" is a child of this process and must not
-        // outlive it; the launchd agent is untouched.
+        // A gateway run inside the app is a child of this process and must not outlive it;
+        // a gateway registered to start at login is untouched.
         MainActor.assumeIsolated {
             Self.model?.daemon.stopForeground()
         }

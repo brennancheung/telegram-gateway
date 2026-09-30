@@ -57,6 +57,8 @@ struct WordingTests {
         #expect(Wording.uptime(since: now.addingTimeInterval(-12 * 60), now: now) == "up 12m")
         #expect(Wording.uptime(since: now.addingTimeInterval(-6 * 3600 - 60), now: now) == "up 6h")
         #expect(Wording.uptime(since: now.addingTimeInterval(-3 * 86400 - 60), now: now) == "up 3d")
+        #expect(Wording.elapsed(since: now.addingTimeInterval(-6 * 3600 - 60), now: now) == "6h")
+        #expect(Wording.elapsed(since: now.addingTimeInterval(-10), now: now) == "under a minute")
         #expect(Wording.timeLeft(until: now.addingTimeInterval(12 * 60 - 10), now: now) == "12 min left")
         #expect(Wording.timeLeft(until: now.addingTimeInterval(15 * 60), now: now) == "15 min left")
         #expect(Wording.timeLeft(until: now.addingTimeInterval(40), now: now) == "under a minute left")

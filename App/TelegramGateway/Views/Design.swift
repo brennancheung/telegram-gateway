@@ -1,23 +1,30 @@
 import SwiftUI
 
-// The panel's visual system. Every screen is built from these pieces and nothing else, so
-// the hierarchy reads the same everywhere:
+// The visual system shared by the menu bar popover and the main window. Every screen is
+// built from these pieces, so the hierarchy reads the same everywhere:
 //
 //   type     screen title 15 semibold · row title 13 medium · body 13 · secondary 11 ·
 //            section label 11 semibold (sentence case, never caps, never underlined)
 //   grouping related rows sit in one inset rounded card; dividers only between rows inside
 //            a card, inset to the text; 16pt between cards
-//   action   one prominent button per screen; when a screen scrolls, actions live in a
-//            fixed footer bar
+//   action   at most one prominent button per screen; when a screen scrolls, actions live
+//            in a fixed bar at the bottom
 //   colour   state only: green fine (a small quiet dot), amber waiting or needs the owner,
 //            red failed
 
 enum PanelSize {
-    static let width: CGFloat = 360
-    static let height: CGFloat = 520
-    /// Space between cards, and the panel's side margin.
+    /// The menu bar popover: fixed width, as tall as its content.
+    static let popoverWidth: CGFloat = 300
+    /// The main window's default and minimum content size.
+    static let window = CGSize(width: 820, height: 560)
+    static let windowMinimum = CGSize(width: 700, height: 460)
+    /// The review sheet.
+    static let sheet = CGSize(width: 460, height: 540)
+    /// Space between cards.
     static let gap: CGFloat = 16
+    /// The popover's side margin, and the window content's.
     static let margin: CGFloat = 12
+    static let windowMargin: CGFloat = 20
 }
 
 enum TypeScale {
@@ -138,18 +145,19 @@ struct LabeledSection<Content: View>: View {
     }
 }
 
-/// The fixed bar at the bottom of a screen that scrolls: a quiet summary on the left, the
-/// actions on the right.
-struct FooterBar<Content: View>: View {
+/// The bar fixed at the bottom of a window section or sheet: a quiet summary on the left,
+/// the actions on the right.
+struct BottomBar<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 8) { content }
-                .padding(.horizontal, PanelSize.margin)
+                .padding(.horizontal, PanelSize.windowMargin)
                 .padding(.vertical, 10)
         }
+        .background(.bar)
     }
 }
 
@@ -272,32 +280,10 @@ struct TrailingState: View {
     }
 }
 
-/// "‹ Back" and a screen title, for screens opened on top of the tabs.
-struct SubscreenHeader: View {
-    var title: String
-    var back: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button(action: back) {
-                HStack(spacing: 3) {
-                    Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
-                    Text("Back").font(TypeScale.body)
-                }
-            }
-            .buttonStyle(.link)
-            Text(title)
-                .font(TypeScale.screenTitle)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// The one prominent button on a screen: accent fill, white label. Drawn here rather than
-/// with `.borderedProminent` so it looks the same whether or not the panel is the key window
-/// (AppKit greys prominent buttons in an inactive window, which is also how every rendered
-/// snapshot would show them).
+/// The popover's one prominent button: accent fill, white label. Drawn here rather than with
+/// `.borderedProminent` because the menu bar popover is not always the key window and AppKit
+/// greys prominent buttons in an inactive one. The main window is a normal key window and
+/// uses the native `.borderedProminent`.
 struct PrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.controlSize) private var controlSize
@@ -319,48 +305,32 @@ extension ButtonStyle where Self == PrimaryButtonStyle {
     static var primary: PrimaryButtonStyle { PrimaryButtonStyle() }
 }
 
-/// A checkbox drawn in the accent colour, for the same reason as `PrimaryButtonStyle`.
-/// Assistive technology still sees a standard toggle.
-struct CheckboxStyle: ToggleStyle {
+/// A row in the popover's action list: behaves like a menu item (highlight on hover).
+struct MenuRow: View {
+    var title: String
+    var detail: String?
+    var action: () -> Void
+    @State private var hovering = false
     @Environment(\.isEnabled) private var isEnabled
 
-    func makeBody(configuration: Configuration) -> some View {
-        Button {
-            configuration.isOn.toggle()
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(configuration.isOn ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(Color.primary.opacity(0.05)))
-                if configuration.isOn {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.white)
-                } else {
-                    RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(Color.primary.opacity(0.28), lineWidth: 1)
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(TypeScale.body)
+                    if let detail {
+                        Text(detail).font(TypeScale.secondary).foregroundStyle(.secondary)
+                    }
                 }
+                Spacer(minLength: 0)
             }
-            .frame(width: 16, height: 16)
-            .opacity(isEnabled ? 1 : 0.45)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(hovering && isEnabled ? AnyShapeStyle(Color.primary.opacity(0.08)) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 6))
             .contentShape(Rectangle())
+            .opacity(isEnabled ? 1 : 0.4)
         }
         .buttonStyle(.plain)
-        .accessibilityRepresentation {
-            Toggle(isOn: configuration.$isOn) { configuration.label }
-        }
-    }
-}
-
-/// A checkbox that sits vertically centred at the leading edge of a row. A locked one is
-/// shown dimmed and cannot be changed.
-struct RowCheckbox: View {
-    @Binding var isOn: Bool
-    var locked = false
-
-    var body: some View {
-        Toggle("", isOn: $isOn)
-            .toggleStyle(CheckboxStyle())
-            .labelsHidden()
-            .disabled(locked)
+        .onHover { hovering = $0 }
     }
 }

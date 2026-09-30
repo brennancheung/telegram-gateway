@@ -83,10 +83,16 @@ enum Wording {
     /// "up 12m", "up 6h", "up 3d".
     static func uptime(since start: Date, now: Date = Date()) -> String {
         let seconds = max(0, now.timeIntervalSince(start))
-        if seconds < 60 { return "just started" }
-        if seconds < 3600 { return "up \(Int(seconds / 60))m" }
-        if seconds < 86400 { return "up \(Int(seconds / 3600))h" }
-        return "up \(Int(seconds / 86400))d"
+        return seconds < 60 ? "just started" : "up \(elapsed(since: start, now: now))"
+    }
+
+    /// "12m", "6h", "3d"; "under a minute" at first.
+    static func elapsed(since start: Date, now: Date = Date()) -> String {
+        let seconds = max(0, now.timeIntervalSince(start))
+        if seconds < 60 { return "under a minute" }
+        if seconds < 3600 { return "\(Int(seconds / 60))m" }
+        if seconds < 86400 { return "\(Int(seconds / 3600))h" }
+        return "\(Int(seconds / 86400))d"
     }
 
     /// Time until a request expires: "12 min left", "under a minute left", "expired".
@@ -149,4 +155,36 @@ enum Wording {
 extension String {
     var lowercasedFirst: String { prefix(1).lowercased() + dropFirst() }
     var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
+extension Grant {
+    /// Its delivery stopped or is failing.
+    var needsAttention: Bool { webhook?.state == .paused || webhook?.state == .retrying }
+
+    /// The trailing state of an app in a list: quiet when fine, amber when it needs the owner.
+    var state: (tone: Tone, text: String) {
+        if let webhook {
+            switch webhook.state {
+            case .paused: return (.attention, "Paused")
+            case .retrying: return (.attention, "Failing")
+            case .active, .unknown:
+                if let last = [webhook.lastDeliveryAt, lastSeenAt].compactMap({ $0 }).max() {
+                    return (.ok, Wording.ago(last))
+                }
+                return (.neutral, "Nothing sent yet")
+            }
+        }
+        if let lastSeenAt { return (.ok, Wording.ago(lastSeenAt)) }
+        return (.neutral, "Not connected yet")
+    }
+
+    /// "2 chats · new messages, chat names", "Product folder · …", or "1 chat · 4 permissions"
+    /// once naming them would wrap the row. The detail lists them in full.
+    var summary: String {
+        let place = chats.isFolder
+            ? "\(chats.folderTitle ?? "A") folder"
+            : Wording.count(chats.chatIds?.count ?? 0, "chat")
+        let permissions = scopes.count <= 2 ? Permission.summary(scopes) : Wording.count(scopes.count, "permission")
+        return "\(place) · \(permissions)"
+    }
 }
