@@ -31,10 +31,15 @@ Package.swift          Swift package: the daemon, the CLI and the shared library
 Sources/
   CTDLib/              C module wrapping td_json_client.h (the raw TDLib JSON interface)
   TDLibClient/         Swift wrapper: one actor per TDLib client, typed auth flow, request/response correlation
-  GatewayCore/         Domain: store, monitored chats, event log, grants, delivery
-  GatewayDaemon/       The launchd service: HTTP + WebSocket API, webhook delivery
-  tgw/                 Command-line tool for development and administration
-App/                   The SwiftUI menu bar app (Xcode project)
+  QRCode/              QR encoder for the terminal login
+  GatewayCore/         Domain: store, monitored chats, event log, grants, translator, monitor, webhooks, media
+  GatewayServer/       The HTTP + WebSocket API (Hummingbird) as a library, so tests drive it in-process
+  GatewayDaemon/       The launchd service executable: wires TDLib, the store, the server, webhook delivery
+  GatewayTestSupport/  Fakes and TDLib fixtures shared by the test targets
+  tgw/                 Command-line tool: administers the daemon; direct TDLib commands for development
+Tests/                 swift-testing suites (no account, no network)
+launchd/               LaunchAgent plist template (tgw daemon install)
+App/                   The SwiftUI menu bar app (Xcode project) — not started yet
 vendor/tdlib/          Build script and pinned commit for libtdjson (built artifact is git-ignored)
 docs/                  All documentation — the contract for integrators and agents
 ```

@@ -137,8 +137,9 @@ Authorization: Bearer tgw_Kq8sT2xvY9bLm4nR7wZ1aC3dE5fG6hJ0iU2oP4rS8tV
 ```
 
 A **token** is `tgw_` followed by 43 characters of base64url (32 random bytes from the
-system CSPRNG). The gateway stores only the SHA-256 hash of each token; a token that is lost
-cannot be recovered, only replaced.
+system CSPRNG). The gateway stores only the SHA-256 hash of each token (plus, for an app
+token, the plain value inside its access request during the `10:00` hand-out window after
+approval, erased with the request); a token that is lost cannot be recovered, only replaced.
 
 There are two kinds of token. They look identical; the gateway tells them apart by lookup.
 
@@ -206,7 +207,7 @@ object (possibly empty) whose keys are listed per code below.
 | 404 | `not_found` | Unknown route, id, or a resolved access request that has been purged. | |
 | 409 | `already_resolved` | Approve/deny on a request that is no longer pending. | `status` |
 | 409 | `webhook_not_paused` | Resume on a webhook that is not paused. | `state` |
-| 409 | `webhook_not_configured` | Webhook operation on a grant with no webhook. | |
+| 409 | `webhook_not_configured` | Webhook operation on a grant with no webhook (`404` for `GET /v1/me/webhook`). The admin token has no webhook. | |
 | 410 | `history_pruned` | `since` is older than the oldest retained event. | `oldest_seq` |
 | 410 | `media_gone` | The file can no longer be obtained from Telegram (message deleted, or Telegram expired it). | `media_id` |
 | 413 | `payload_too_large` | Request body over 64 KiB. | |
@@ -502,7 +503,8 @@ Requires `chats:read`. Returns the chats in the grant (list or folder), each wit
 
 `GET /v1/admin/chats` — the monitored chats. `GET /v1/admin/chats?all=true&limit=200&cursor=…`
 — every chat in the account's main chat list, ordered as Telegram orders it (most recent
-activity first), paginated with `next_cursor` (opaque string). Secret chats are omitted.
+activity first), paginated with `next_cursor` (opaque string; `limit` 1–500, default 200).
+Secret chats are omitted. Needs a logged-in daemon (`503 not_logged_in` otherwise).
 
 ```json
 { "chats": [ … ], "has_more": true, "next_cursor": "c_MTcyNzYxNDU4Nw" }
@@ -537,9 +539,12 @@ re-evaluates membership when Telegram reports a change.
 `PUT /v1/admin/monitored-chats` with `{ "chat_ids": [ … ], "folder_ids": [ … ] }` replaces
 the whole monitored set (both arrays required; empty arrays clear). The effective set is the
 union of the explicit chats and every chat in the monitored folders. Response `200` with the
-same shape as `GET`. Unknown or secret chats → `400 chat_not_monitorable`. Each chat that
-enters or leaves the effective set produces a `monitoring.started` / `monitoring.stopped`
-event ([events.md](events.md)). The daemon begins watching new chats within a few seconds and
+same shape as `GET`. Unknown or secret chats → `400 chat_not_monitorable`; a folder id the
+gateway has not seen from Telegram → `400 invalid_request` (`field: "folder_ids"`); validating
+a chat needs TDLib, so without a login this is `503 not_logged_in`. Each chat that enters or
+leaves the effective set produces a `monitoring.started` / `monitoring.stopped` event
+([events.md](events.md)); when one `PUT` both removes and adds chats, the `stopped` events
+are recorded before the `started` ones. The daemon begins watching new chats within a few seconds and
 backfills from the moment of the change, not before: messages sent to a chat before it was
 monitored are available only through [History](#history).
 
@@ -568,10 +573,11 @@ the last event it processed passes it back unchanged.
 ### Retention
 
 By default the gateway keeps every event forever (`events_retention_days: null`). The owner
-can prune ([Admin: pruning](#admin-pruning)). If `since` is lower than the oldest retained
-`seq`, the request fails with `410 history_pruned` and `details.oldest_seq`; the consumer
-decides whether to continue from `oldest_seq` (accepting a gap) and can fill the gap with
-[History](#history).
+can prune ([Admin: pruning](#admin-pruning)). If a page starting after `since` would skip
+pruned events — that is, `since + 1` is lower than the oldest retained `seq` — the request
+fails with `410 history_pruned` and `details.oldest_seq`; the consumer decides whether to
+continue from `oldest_seq` (accepting a gap) and can fill the gap with [History](#history).
+`since = 0` is exempt: it always means "from the beginning of retained history".
 
 ### `GET /v1/events`
 
@@ -638,16 +644,19 @@ Close codes the gateway uses:
 | Code | Meaning |
 |---|---|
 | `1001` | Daemon shutting down (restart or upgrade). Reconnect with backoff. |
-| `4401` | Token invalid (sent before any frame when the upgrade's `Authorization` fails; HTTP `401` is returned instead when the client can see it). |
+| `4400` | The query string is invalid (`since`, `types` or `chat_id`); an error frame precedes it. |
+| `4401` | Missing, invalid or revoked token. The upgrade always succeeds; an error frame with the HTTP `error.code` (`missing_token`, `invalid_token`, `token_revoked`) is sent, then this close. (A refused upgrade cannot carry a JSON body, so the WebSocket never answers `401`.) |
 | `4403` | Grant lacks `messages:read` and `chats:read` (nothing to stream). |
 | `4409` | Too many connections for this token (limit 4). |
+| `4429` | The token's request budget (600 per minute) is exhausted; an error frame precedes it. |
 | `4410` | `history_pruned` (an error frame precedes it). |
 | `4499` | Grant revoked while connected. Do not reconnect. |
 
 There is no acknowledgement from the client: for WebSocket, **the consumer owns the cursor**.
 The gateway sends as fast as the socket accepts; if the client falls more than 10 000
-frames behind, the gateway sends an error frame `slow_consumer` and closes with `1008`.
-Reconnect with `since` and the backlog is replayed at whatever pace the client reads.
+events behind the head of the log (the socket is not draining while events keep arriving),
+the gateway sends an error frame `slow_consumer` and closes with `1008`. Reconnect with
+`since` and the backlog is replayed at whatever pace the client reads.
 
 Up to 4 concurrent WebSocket connections per token, each with its own `since`.
 
@@ -655,7 +664,8 @@ Up to 4 concurrent WebSocket connections per token, each with its own `since`.
 
 ## History
 
-`GET /v1/chats/{chat_id}/messages` — requires `history:read`; the chat must be in the grant.
+`GET /v1/chats/{chat_id}/messages` — requires `history:read`; the chat must be in the grant
+(admin: must be monitored).
 Reads the chat's timeline **from Telegram** (not from the event log), so it reaches back
 before the chat was monitored and before the grant existed — as far as the owner's account
 can see. It is slower than the event endpoints and rate-limited more tightly (Telegram
@@ -683,8 +693,9 @@ Response `200`, **newest first** (Telegram's natural order for history):
 Each item is a [message object](events.md#message-object), the same shape as in
 `message.new`. Message ids are not contiguous (deleted messages, service messages the
 gateway does not expose). `next_before` is the id of the oldest message returned; pass it
-as `before` to continue backwards. `has_more: false` means the beginning of the chat as
-visible to the account. `503 telegram_unavailable` when the connection is down.
+as `before` to continue backwards. `has_more` is `true` whenever a full page came back, so
+the last page before the beginning of the chat may be followed by one empty page.
+`503 telegram_unavailable` when the connection is down.
 
 ---
 
@@ -710,10 +721,14 @@ can see, otherwise `403 chat_not_granted`.
   `{ "status": "downloading", "media_id": "med_…", "bytes_downloaded": 3145728, "size": 20971520 }`.
   Poll again; each poll waits up to 30s.
 - `410 media_gone` when Telegram can no longer serve the file (message deleted, file
-  expired). `503 telegram_unavailable` when not cached and the connection is down.
+  expired). `503 telegram_unavailable` when not cached and the connection is down. A fifth
+  concurrent uncached download for one token is `429 rate_limited` with `Retry-After: 5`.
+- An unknown media id is `403 chat_not_granted`, like an unknown chat (never `404`).
 
 `HEAD /v1/media/{media_id}` returns the headers without the body (and triggers no download:
-`Content-Length` is the size from the media object, `X-TGW-Cached: true|false`).
+`Content-Length` is the size from the media object when known, `X-TGW-Cached: true|false`).
+A chat's profile photo is served as `image/jpeg` at Telegram's "big" size, reported as
+640×640 (TDLib does not give chat photo dimensions).
 
 ### Cache
 
@@ -778,8 +793,8 @@ after the previous one succeeded, which is what guarantees order.
 
 ### Retry schedule
 
-On failure the same delivery (same `delivery_id`, same events, incremented `X-TGW-Attempt`)
-is retried after a delay:
+On failure the same delivery (same `delivery_id`, same events, incremented `X-TGW-Attempt`;
+`sent_at` in the body is the time of this attempt) is retried after a delay:
 
 | Attempt | Delay before it | Elapsed since first failure (approx.) |
 |---|---|---|
@@ -794,7 +809,9 @@ is retried after a delay:
 | 10 … 31 | `1:00:00` each | up to `24:00:00` |
 
 After `24:00:00` of continuous failure the webhook enters state **`paused`**: no more
-attempts, the cursor (`cursor_seq`) is kept, events keep accumulating in the log. The owner
+attempts, the cursor (`cursor_seq`) is kept, events keep accumulating in the log. Precisely:
+after a failed attempt, if the next attempt would land more than `24:00:00` after the first
+failure, the webhook pauses instead (attempt 31 is the last one on the table above). The owner
 sees a paused webhook in the menu bar app and can resume it; the app can also resume itself
 (`POST /v1/me/webhook/resume`) or replace the URL (`PUT /v1/me/webhook`). On resume, delivery
 continues from the cursor with no events lost. While a webhook is `retrying` or `paused`, new
@@ -866,14 +883,16 @@ States are those in `tdlib.auth_state`.
 
 | Method and path | Body | Effect |
 |---|---|---|
-| `GET /v1/admin/auth` | | `{ "auth_state": "wait_qr_confirmation", "qr_link": "tg://login?token=…", "phone_hint": null }`. `qr_link` is present only in `wait_qr_confirmation`; render it as a QR code for the owner to scan with a phone that is already logged in to Telegram. It changes every ~30s; poll this endpoint every 2s while displaying it. |
+| `GET /v1/admin/auth` | | `{ "auth_state": "wait_qr_confirmation", "qr_link": "tg://login?token=…", "phone_hint": null, "password_hint": null }`. `qr_link` is present only in `wait_qr_confirmation`; render it as a QR code for the owner to scan with a phone that is already logged in to Telegram. It changes every ~30s; poll this endpoint every 2s while displaying it. `password_hint` is set in `wait_password`. Every `POST` below answers with this same object (the state after the step). |
 | `POST /v1/admin/auth/qr` | | Request (or refresh) a QR login. Moves to `wait_qr_confirmation`. |
 | `POST /v1/admin/auth/phone` | `{ "phone_number": "+15551234567" }` | Fallback: start phone login. Moves to `wait_code`. |
 | `POST /v1/admin/auth/code` | `{ "code": "12345" }` | Submit the code Telegram sent. Moves to `ready` or `wait_password`. |
-| `POST /v1/admin/auth/password` | `{ "password": "…" }` | Submit the two-factor password. Moves to `ready`. Returns `{ "password_hint": "…" }` on `400 invalid_request` with `reason: "wrong_password"`. |
+| `POST /v1/admin/auth/password` | `{ "password": "…" }` | Submit the two-factor password. Moves to `ready`. A wrong password is `400 invalid_request` with `details.reason: "wrong_password"` and `details.password_hint`. |
 | `POST /v1/admin/auth/logout` | | Ends the Telegram session on this device. The event log, grants and monitored set are kept; nothing new arrives until login. |
 
-The daemon never stores phone number, code or password beyond passing them to TDLib.
+The daemon never stores phone number, code or password beyond passing them to TDLib. A wrong
+code is `400 invalid_request` with `details.reason: "wrong_code"`. Without `api_id`/`api_hash`
+configured, every login endpoint answers `503 not_logged_in` with `auth_state: "unknown"`.
 
 ---
 
@@ -914,8 +933,9 @@ proxied to Telegram) and the daemon's SQLite.
 | WebSocket connections | 4 per token |
 
 Exceeding a limit returns `429 rate_limited` with `Retry-After` (seconds) and
-`details.retry_after`. Every response carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`
-for the per-token bucket.
+`details.retry_after`. Every authenticated response carries `X-RateLimit-Limit` and
+`X-RateLimit-Remaining` for the per-token bucket (the unauthenticated endpoints have no
+per-token bucket and carry neither).
 
 ---
 
@@ -955,3 +975,28 @@ for the per-token bucket.
 
 "app" rows also accept the admin token, which behaves as a grant with every scope over every
 monitored chat.
+
+---
+
+## Deviations and clarifications from the first draft
+
+Recorded when the daemon was built (2026-09-29); each is also applied in the text above.
+
+- **WebSocket authentication** cannot answer HTTP `401`: the channel drops any response that
+  refuses an upgrade. The stream always upgrades and closes with `4401` (error frame first).
+  Close codes `4400` (bad query) and `4429` (request budget) were added for the same reason.
+- **`410 history_pruned`** fires when `since + 1 < oldest_seq`, never for `since = 0`.
+- **Slow consumer** is measured as events behind the head of the log, not frames.
+- **Webhook secret** is stored in plain text (the gateway signs with it). The **app token**
+  is kept in plain text inside its access request for the `10:00` hand-out window, then erased.
+- **`GET /v1/me/webhook`** without a webhook is `404 webhook_not_configured`; the other
+  webhook operations use `409`. The admin token has no webhook (`409` on `PUT`).
+- **`GET /v1/admin/auth`** also carries `password_hint`; every login `POST` returns this object.
+- **Media**: unknown ids are `403 chat_not_granted`; a fifth concurrent uncached download per
+  token is `429`; chat photos are reported as 640×640.
+- **`PUT /v1/admin/monitored-chats`**: unknown folder → `400 invalid_request`; needs TDLib to
+  validate chats (`503 not_logged_in` without a login); `stopped` before `started`.
+- **Retention pause**: attempt 31 is the last; the pause happens when the next attempt would
+  land past `24:00:00`.
+- **`X-RateLimit-*`** headers appear on authenticated responses only.
+- **History `has_more`** is "a full page came back".

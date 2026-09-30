@@ -30,7 +30,7 @@ struct Watch: AsyncParsableCommand {
         let creds = try credentials.resolve()
         let wanted = Set(chatIds)
         let all = all
-        try await Session.run(credentials: creds) { session in
+        try await Session.run(credentials: creds, command: "watch") { session in
             try await session.resume()
             let client = session.client
 

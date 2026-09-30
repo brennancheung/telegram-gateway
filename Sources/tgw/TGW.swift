@@ -10,12 +10,16 @@ struct TGW: AsyncParsableCommand {
         commandName: "tgw",
         abstract: "Telegram Gateway command-line tool.",
         discussion: """
-            Logs in to the owner's own Telegram account through TDLib and lets you inspect \
-            what the gateway sees. Data lives in ~/Library/Application Support/TelegramGateway/. \
-            Never run two tgw commands (or tgw and the daemon) at the same time: TDLib's \
-            directory can only be opened by one process.
+            Administers the gateway daemon over its local API (daemon, health, monitor, \
+            requests, grants, events) and, for development before the daemon is installed, \
+            opens TDLib directly (login, whoami, chats, watch, logout). Data lives in \
+            ~/Library/Application Support/TelegramGateway/ (TGW_HOME overrides). The direct \
+            commands refuse to run while the daemon holds TDLib.
             """,
-        subcommands: [Login.self, Whoami.self, Chats.self, Watch.self, Logout.self]
+        subcommands: [
+            DaemonCommand.self, Health.self, MonitorCommand.self, RequestsCommand.self, GrantsCommand.self, EventsCommand.self,
+            Login.self, Whoami.self, Chats.self, Watch.self, Logout.self,
+        ]
     )
 }
 

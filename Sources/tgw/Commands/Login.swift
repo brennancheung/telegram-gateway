@@ -20,7 +20,7 @@ struct Login: AsyncParsableCommand {
         let creds = try credentials.resolve()
         let phone = phone
         let largeQr = largeQr
-        try await Session.run(credentials: creds) { session in
+        try await Session.run(credentials: creds, command: "login") { session in
             try await LoginFlow(session: session, phone: phone, largeQr: largeQr).drive()
         }
     }
@@ -95,7 +95,7 @@ struct LoginFlow: Sendable {
                 try await session.goOffline()
                 let me = try await client.send("getMe")
                 print("\nLogged in as \(Describe.user(me))")
-                print("Data: \(Paths.tdlib.path)")
+                print("Data: \(session.paths.tdlib.path)")
                 return
 
             case .loggingOut, .closing, .closed:

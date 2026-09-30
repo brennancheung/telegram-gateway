@@ -59,7 +59,7 @@ Timestamps are RFC 3339 UTC (see [api.md](api.md#timestamps)); ids are strings
 |---|---|---|---|
 | `message.new` | `message` | A message arrives in a monitored chat (including the owner's own outgoing messages, `is_outgoing: true`), and for each message found by backfill after a gap. | `messages:read` |
 | `message.edited` | `message` | A message's text, caption or media changed. The full message is sent, not a diff. | `messages:read` |
-| `message.deleted` | `message_ids` | Messages were deleted for everyone. | `messages:read` |
+| `message.deleted` | `message_ids` | Messages were deleted for everyone (TDLib `is_permanent`, not `from_cache`). | `messages:read` |
 | `chat.updated` | `chat`, `changes` | The chat's title, username, photo or member count changed. | `chats:read` |
 | `monitoring.started` | `monitoring` | The chat entered the monitored set (owner added it, or it joined a monitored folder). | `chats:read` |
 | `monitoring.stopped` | `monitoring` | The chat left the monitored set. | `chats:read` |
@@ -143,7 +143,10 @@ A message with a photo and a caption:
 ### `message.edited`
 
 Same payload as `message.new`; `edit_date` is set and `occurred_at` equals it. Telegram does
-not say what changed; compare with what you stored. Edits of messages the app never saw (sent
+not say what changed; compare with what you stored. One event per edit: the gateway emits
+once per (chat, message, `edit_date`), whichever of Telegram's two edit notifications arrives
+first. A content change that Telegram does not stamp with an edit date (poll votes, a link
+preview finishing loading) is not an edit and produces nothing. Edits of messages the app never saw (sent
 before monitoring started) are delivered too — a consumer may see `message.edited` for an
 unknown id and should treat it as an upsert.
 
@@ -292,7 +295,7 @@ The same object appears in `message.new`, `message.edited`, and
 | `media` | array | Zero or one [media object](#media-object). (Telegram allows one file per message; an "album" is several messages sharing a `media_group_id`.) An array so a future format can carry more without a breaking change. |
 | `media_group_id` | string or null | Set when the message is part of an album; all messages of the album share it and arrive as separate `message.new` events. |
 | `link` | string or null | `https://t.me/<username>/<id>` when the chat has a public username; otherwise `null`. |
-| `raw_content_type` | string | TDLib's `messageContent` type name (`messageText`, `messagePhoto`, `messagePoll`, `messagePinMessage`, …). **Unstable escape hatch**: it tells a consumer *what kind* of message it is looking at when the gateway does not model the content (a poll, a pinned-message notice, a location). Its values follow TDLib and may change when the pinned TDLib commit is bumped. Do not build logic on it beyond logging and counting. |
+| `raw_content_type` | string | TDLib's `messageContent` type name (`"unknown"` if TDLib sent none) (`messageText`, `messagePhoto`, `messagePoll`, `messagePinMessage`, …). **Unstable escape hatch**: it tells a consumer *what kind* of message it is looking at when the gateway does not model the content (a poll, a pinned-message notice, a location). Its values follow TDLib and may change when the pinned TDLib commit is bumped. Do not build logic on it beyond logging and counting. |
 
 Messages the gateway does not model (polls, locations, contacts, service messages like
 "X joined the group", stickers' emoji) still produce a `message.new` with `text: ""` (or the
@@ -390,7 +393,14 @@ The caption of a media message is the message's `text`, not a field of the media
 so text-processing code is the same for every message.
 
 A chat's `photo` (in the [chat object](api.md#the-chat-object)) is a reduced media reference:
-`{ "media_id", "width", "height" }`, always a JPEG.
+`{ "media_id", "width", "height" }`, always a JPEG at Telegram's "big" size, reported as
+640×640 (TDLib does not give chat photo dimensions).
+
+Kind-specific notes: `sticker` carries `mime` from its format (`image/webp`,
+`application/x-tgsticker`, `video/webm`); `video_note` reports its side length as both
+`width` and `height` and `mime` `video/mp4`; `photo` is the largest size Telegram offers
+with `mime` `image/jpeg`; `size` is `null` until Telegram reports it (some videos only carry
+an expected size, which is used).
 
 ---
 
@@ -436,3 +446,17 @@ and are served only under `/v2/…`. `/v1/…` keeps serving `v: 1` events, incl
 recorded after v2 exists, for as long as v1 is supported; a deprecation is announced in this
 file with a date at least 90 days out. Events recorded under v1 remain readable under v2 (the
 gateway renders from stored data, not from cached JSON).
+
+---
+
+## Deviations and clarifications from the first draft
+
+Recorded when the daemon was built (2026-09-29); each is also applied above.
+
+- `message.edited` is emitted once per `edit_date`; content changes without an edit date
+  are not edits.
+- `message.deleted` follows TDLib's `is_permanent && !from_cache`.
+- Chat photos are 640×640 by convention; sticker and video-note media fields as noted under
+  "Media object".
+- A `sender` of type `user` whom Telegram no longer resolves is `"Deleted Account"` with
+  `is_bot: false`.

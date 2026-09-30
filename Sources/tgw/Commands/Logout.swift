@@ -11,7 +11,7 @@ struct Logout: AsyncParsableCommand {
 
     func run() async throws {
         let creds = try credentials.resolve()
-        try await Session.run(credentials: creds) { session in
+        try await Session.run(credentials: creds, command: "logout") { session in
             let client = session.client
             // Parameters must be set before TDLib accepts logOut, whatever the login state.
             var seen = 0
@@ -29,7 +29,7 @@ struct Logout: AsyncParsableCommand {
             }
             _ = try await client.send("logOut")
             _ = try await client.waitForAuthState { $0 == .closed }
-            print("Logged out; local Telegram data removed from \(Paths.tdlib.path)")
+            print("Logged out; local Telegram data removed from \(session.paths.tdlib.path)")
         }
     }
 }

@@ -1,0 +1,158 @@
+import ArgumentParser
+import Foundation
+import GatewayCore
+import GatewayServer
+import Logging
+import ServiceLifecycle
+import TDLibClient
+
+/// The gateway daemon (docs/design.md "Gateway daemon"): the one TDLib owner, the event log,
+/// the HTTP + WebSocket API and webhook delivery. Started by launchd; `GatewayDaemon --verbose`
+/// in a terminal for development.
+@main
+struct GatewayDaemonCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "GatewayDaemon",
+        abstract: "Telegram Gateway daemon: owns TDLib, records events, serves the local API."
+    )
+
+    static let version = "0.1.0"
+
+    @Flag(help: "Log at debug level.")
+    var verbose = false
+
+    @Option(help: "Data directory (default: TGW_HOME or ~/Library/Application Support/TelegramGateway).")
+    var home: String?
+
+    @Option(help: "Port to bind on 127.0.0.1 (default: TGW_PORT, then config.json, then 41414).")
+    var port: Int?
+
+    func run() async throws {
+        let paths = home.map { Paths(home: URL(filePath: $0, directoryHint: .isDirectory)) } ?? Paths.resolve()
+        try paths.prepare()
+        var loaded = try Config.load(paths: paths)
+        if let port { loaded.port = port }
+        let config = loaded
+
+        let level: Logger.Level = verbose ? .debug : .info
+        LoggingSystem.bootstrap { label in
+            var handler = StreamLogHandler.standardError(label: label)
+            handler.logLevel = level
+            return handler
+        }
+        let logger = Logger(label: "daemon")
+
+        let lock: InstanceLock
+        do {
+            lock = try InstanceLock.acquire(paths: paths, role: "daemon")
+        } catch let error as GatewayError {
+            logger.error("cannot start: \(error.description)")
+            throw ExitCode(1)
+        }
+        defer { withExtendedLifetime(lock) {} }
+
+        let adminToken = try Keychain.adminToken()
+        let store = try Store.open(paths: paths)
+        let clock = SystemClock()
+        let startedAt = clock.now
+
+        // TDLib, if this machine has an api_id / api_hash. Without one the daemon still serves
+        // the store-backed API so grants and monitoring can be set up.
+        let session: TelegramSession?
+        let telegram: any TelegramControl
+        let tdlib: any TDLibRequesting
+        if let apiId = config.apiId, let apiHash = config.apiHash, config.hasCredentials {
+            let parameters = TDLibParameters(
+                apiId: apiId, apiHash: apiHash, databaseDirectory: paths.tdlib.path, filesDirectory: paths.tdlibFiles.path,
+                databaseEncryptionKey: try Keychain.databaseKey(), applicationVersion: GatewayDaemonCommand.version
+            )
+            let s = TelegramSession(parameters: parameters, logger: Logger(label: "telegram"))
+            session = s
+            telegram = s
+            tdlib = s
+        } else {
+            logger.warning("no api_id / api_hash in \(paths.config.path); Telegram is disabled until they are added and the daemon restarts")
+            session = nil
+            telegram = NoTelegram()
+            tdlib = NoTelegram()
+        }
+
+        let translator = Translator(tdlib: tdlib)
+        let eventLog = EventLog(store: store, clock: clock)
+        let grants = Grants(store: store, adminToken: adminToken, clock: clock)
+        let accessRequests = AccessRequests(store: store, grants: grants, clock: clock)
+        let monitor = Monitor(store: store, eventLog: eventLog, translator: translator, tdlib: tdlib, clock: clock, logger: Logger(label: "monitor"))
+        let mediaCache = MediaCache(store: store, tdlib: tdlib, maxBytes: config.mediaCacheMaxBytes, clock: clock, logger: Logger(label: "media"))
+        let dispatcher = WebhookDispatcher(store: store, eventLog: eventLog, grants: grants, http: URLSessionWebhookClient(), clock: clock, logger: Logger(label: "webhooks"))
+        let rateLimiter = RateLimiter(clock: clock)
+        let shutdown = ShutdownSignal()
+
+        try await monitor.load()
+        await dispatcher.start()
+        var monitorTask: Task<Void, Never>?
+        if let session {
+            await session.start()
+            monitorTask = Task { await monitor.run(updates: session.updates) }
+        }
+        let housekeeping = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3600))
+                await Maintenance.sweep(accessRequests: accessRequests, grants: grants, rateLimiter: rateLimiter)
+                if let days = config.eventsRetentionDays {
+                    do {
+                        let (deleted, oldest) = try await Maintenance.applyRetention(days: days, clock: clock, eventLog: eventLog, grants: grants)
+                        if deleted > 0 { logger.info("retention: deleted \(deleted) events, oldest seq is now \(oldest)") }
+                    } catch let error as APIError where error.code == "cursor_behind" {
+                        logger.warning("retention skipped: \(error.message)")
+                    } catch {
+                        logger.error("retention failed: \(error)")
+                    }
+                }
+            }
+        }
+
+        let deps = Dependencies(
+            store: store, eventLog: eventLog, grants: grants, accessRequests: accessRequests, monitor: monitor,
+            translator: translator, mediaCache: mediaCache, dispatcher: dispatcher, telegram: telegram,
+            rateLimiter: rateLimiter, clock: clock, config: config, shutdown: shutdown, startedAt: startedAt,
+            version: GatewayDaemonCommand.version, logger: Logger(label: "server")
+        )
+        let app = GatewayServer.buildApplication(deps: deps, port: config.port, logger: Logger(label: "http"))
+        let group = ServiceGroup(configuration: .init(services: [app], logger: logger))
+
+        // SIGTERM / SIGINT: tell WebSocket clients we are going away (1001), then stop the
+        // server, then close TDLib so its binlog is flushed.
+        let signals = SignalWatcher(signals: [SIGTERM, SIGINT]) {
+            logger.info("shutting down")
+            Task {
+                await shutdown.trigger()
+                try? await Task.sleep(for: .milliseconds(300))
+                await group.triggerGracefulShutdown()
+            }
+        }
+        logger.info("Telegram Gateway \(GatewayDaemonCommand.version) listening on http://127.0.0.1:\(config.port), data in \(paths.home.path)")
+        try await group.run()
+
+        housekeeping.cancel()
+        await dispatcher.shutdown()
+        monitorTask?.cancel()
+        if let session { await session.shutdown() }
+        withExtendedLifetime(signals) {}
+        logger.info("stopped")
+    }
+}
+
+/// Keeps `DispatchSourceSignal`s alive for the life of the process.
+final class SignalWatcher: Sendable {
+    private let sources: [DispatchSourceSignal]
+
+    init(signals: [Int32], handler: @escaping @Sendable () -> Void) {
+        sources = signals.map { number in
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
+            source.setEventHandler(handler: handler)
+            source.resume()
+            return source
+        }
+    }
+}

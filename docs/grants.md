@@ -157,8 +157,10 @@ grant. Asking for more means a new access request, which the owner sees as a new
 
 A token is the string `tgw_` + 43 characters (32 random bytes, base64url). It is the only
 thing an application presents; it identifies the grant and proves possession. The gateway
-stores a SHA-256 hash of it, so the token appears exactly once: in the approved poll response
-(for `10:00` after approval, then never again).
+keeps a SHA-256 hash of it on the grant; the plain token lives only inside the access request
+for the `10:00` hand-out window after approval and is erased with it, so the token appears
+exactly once to the application: in the approved poll response (for `10:00` after approval,
+then never again).
 
 There is also one **admin token**, held by the menu bar app and `tgw`, that is not tied to a
 grant and can do everything. Applications never receive it. The daemon writes it to the

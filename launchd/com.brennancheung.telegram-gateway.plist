@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent template for the gateway daemon. `tgw daemon install` copies it to
+  ~/Library/LaunchAgents/ with __BINARY__, __HOME__ and __LOGS__ resolved and bootstraps it
+  into the user's launchd domain (gui/<uid>). The menu bar app will later register the daemon
+  with SMAppService instead of this file.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.brennancheung.telegram-gateway</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BINARY__</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TGW_HOME</key>
+        <string>__HOME__</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>__LOGS__/daemon.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOGS__/daemon.err.log</string>
+</dict>
+</plist>

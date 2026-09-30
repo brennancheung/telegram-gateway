@@ -1,29 +1,40 @@
 import Foundation
+import GatewayCore
 import Synchronization
 import TDLibClient
 
 /// One TDLib client plus the parameters for this machine. Every command opens one, does its
-/// work, and closes it — also on Ctrl-C — so TDLib's binlog is left consistent.
+/// work, and closes it — also on Ctrl-C — so TDLib's binlog is left consistent. While open
+/// it holds the instance lock, so it refuses to start while the daemon owns TDLib.
 struct Session: Sendable {
     let client: TDLibClient
     let parameters: TDLibParameters
+    let paths: Paths
+    let lock: InstanceLock
 
     /// Creates the client and nudges TDLib so the first authorization state arrives
     /// (TDLib does nothing for a client until it receives a request).
-    static func open(credentials: Credentials) async throws -> Session {
-        try Paths.prepare()
+    static func open(credentials: Credentials, command: String) async throws -> Session {
+        let paths = Paths.resolve()
+        try paths.prepare()
+        let lock: InstanceLock
+        do {
+            lock = try InstanceLock.acquire(paths: paths, role: "tgw \(command)")
+        } catch let error as GatewayError {
+            throw CLIError(error.description)
+        }
         let key = try Keychain.databaseKey()
         let parameters = TDLibParameters(
             apiId: credentials.apiId,
             apiHash: credentials.apiHash,
-            databaseDirectory: Paths.tdlib.path,
-            filesDirectory: Paths.tdlibFiles.path,
+            databaseDirectory: paths.tdlib.path,
+            filesDirectory: paths.tdlibFiles.path,
             databaseEncryptionKey: key,
             applicationVersion: applicationVersion
         )
         let client = TDLibClient()
         _ = try await client.send("getOption", ["name": "version"])
-        return Session(client: client, parameters: parameters)
+        return Session(client: client, parameters: parameters, paths: paths, lock: lock)
     }
 
     /// Answers `waitTdlibParameters`, then waits for `ready`. Fails with a clear message if
@@ -79,9 +90,10 @@ struct Session: Sendable {
     /// and lets the close happen; a second Ctrl-C exits at once.
     static func run(
         credentials: Credentials,
+        command: String,
         _ body: @escaping @Sendable (Session) async throws -> Void
     ) async throws {
-        let session = try await open(credentials: credentials)
+        let session = try await open(credentials: credentials, command: command)
         let work = Task { try await body(session) }
         Interrupt.install {
             warn("\ninterrupted; closing TDLib (Ctrl-C again to force quit)")
@@ -89,6 +101,7 @@ struct Session: Sendable {
         }
         let result = await work.result
         await session.close()
+        withExtendedLifetime(session.lock) {}
         if case .failure(let error) = result, !(error is CancellationError) {
             throw error
         }

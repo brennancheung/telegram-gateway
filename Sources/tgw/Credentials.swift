@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import GatewayCore
 
 /// The application's identity with Telegram: `api_id` (a number) and `api_hash` (a hex
 /// string), obtained once at https://my.telegram.org under "API development tools". They
@@ -9,14 +10,11 @@ struct Credentials: Sendable {
     let apiHash: String
 
     /// Resolution order: command-line flags, then `TGW_API_ID` / `TGW_API_HASH` in the
-    /// environment, then `api_id` / `api_hash` in `Paths.config`.
-    static func resolve(apiId: Int32?, apiHash: String?) throws -> Credentials {
-        let env = ProcessInfo.processInfo.environment
+    /// environment, then `api_id` / `api_hash` in `config.json` (both read by `Config.load`).
+    static func resolve(apiId: Int32?, apiHash: String?, paths: Paths = Paths.resolve()) throws -> Credentials {
         var id = apiId
         var hash = apiHash
-        if id == nil, let s = env["TGW_API_ID"], let n = Int32(s) { id = n }
-        if hash == nil, let s = env["TGW_API_HASH"], !s.isEmpty { hash = s }
-        if id == nil || hash == nil, let file = readConfig() {
+        if id == nil || hash == nil, let file = try? Config.load(paths: paths) {
             if id == nil { id = file.apiId }
             if hash == nil { hash = file.apiHash }
         }
@@ -29,25 +27,11 @@ struct Credentials: Sendable {
                 get an api_id and api_hash, then provide them one of these ways:
                   1. flags:        --api-id 12345 --api-hash 0123abcd…
                   2. environment:  TGW_API_ID=12345 TGW_API_HASH=0123abcd…
-                  3. file:         \(Paths.config.path)
+                  3. file:         \(paths.config.path)
                                    {"api_id": 12345, "api_hash": "0123abcd…"}
                 """)
         }
         return Credentials(apiId: id, apiHash: hash)
-    }
-
-    private static func readConfig() -> (apiId: Int32?, apiHash: String?)? {
-        guard let data = try? Data(contentsOf: Paths.config),
-              let any = try? JSONSerialization.jsonObject(with: data),
-              let object = any as? [String: Any]
-        else { return nil }
-        let id: Int32?
-        switch object["api_id"] {
-        case let n as Int: id = Int32(exactly: n)
-        case let s as String: id = Int32(s)
-        default: id = nil
-        }
-        return (id, object["api_hash"] as? String)
     }
 }
 

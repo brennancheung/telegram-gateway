@@ -12,10 +12,18 @@ let package = Package(
     products: [
         .library(name: "TDLibClient", targets: ["TDLibClient"]),
         .library(name: "QRCode", targets: ["QRCode"]),
+        .library(name: "GatewayCore", targets: ["GatewayCore"]),
+        .library(name: "GatewayServer", targets: ["GatewayServer"]),
         .executable(name: "tgw", targets: ["tgw"]),
+        .executable(name: "GatewayDaemon", targets: ["GatewayDaemon"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
+        .package(url: "https://github.com/groue/GRDB.swift", from: "7.9.0"),
+        .package(url: "https://github.com/hummingbird-project/hummingbird", from: "2.9.0"),
+        .package(url: "https://github.com/hummingbird-project/hummingbird-websocket", from: "2.8.0"),
+        .package(url: "https://github.com/apple/swift-log", from: "1.6.0"),
+        .package(url: "https://github.com/swift-server/swift-service-lifecycle", from: "2.6.0"),
     ],
     targets: [
         // Raw C interface: td_create_client_id / td_send / td_receive / td_execute.
@@ -38,12 +46,47 @@ let package = Package(
             name: "QRCode",
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
+        // Domain: store, event log, grants, access requests, translator, monitor, webhooks,
+        // media cache. Everything except the TDLib edge is testable without an account.
+        .target(
+            name: "GatewayCore",
+            dependencies: [
+                "TDLibClient",
+                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        // The HTTP + WebSocket API (docs/api.md) as a library so tests can drive it in-process.
+        .target(
+            name: "GatewayServer",
+            dependencies: [
+                "GatewayCore",
+                .product(name: "Hummingbird", package: "hummingbird"),
+                .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        // The launchd service: wires TDLib, the store, the monitor, webhooks and the server.
+        .executableTarget(
+            name: "GatewayDaemon",
+            dependencies: [
+                "GatewayServer",
+                "GatewayCore",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "ServiceLifecycle", package: "swift-service-lifecycle"),
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .executableTarget(
             name: "tgw",
             dependencies: [
                 "TDLibClient",
                 "QRCode",
+                "GatewayCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
+                .product(name: "Logging", package: "swift-log"),
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
@@ -55,6 +98,28 @@ let package = Package(
         .testTarget(
             name: "QRCodeTests",
             dependencies: ["QRCode"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        // Fakes (TDLib, webhook HTTP, Telegram session) and fixtures shared by the test targets.
+        .target(
+            name: "GatewayTestSupport",
+            dependencies: ["GatewayCore"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
+            name: "GatewayCoreTests",
+            dependencies: ["GatewayCore", "GatewayTestSupport"],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        .testTarget(
+            name: "GatewayServerTests",
+            dependencies: [
+                "GatewayServer",
+                "GatewayCore",
+                "GatewayTestSupport",
+                .product(name: "HummingbirdTesting", package: "hummingbird"),
+                .product(name: "HummingbirdWSTesting", package: "hummingbird-websocket"),
+            ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]

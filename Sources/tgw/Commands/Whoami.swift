@@ -11,7 +11,7 @@ struct Whoami: AsyncParsableCommand {
 
     func run() async throws {
         let creds = try credentials.resolve()
-        try await Session.run(credentials: creds) { session in
+        try await Session.run(credentials: creds, command: "whoami") { session in
             try await session.resume()
             let me = try await session.client.send("getMe")
             print(Describe.user(me))

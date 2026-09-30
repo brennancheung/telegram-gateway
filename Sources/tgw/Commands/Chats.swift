@@ -15,7 +15,7 @@ struct Chats: AsyncParsableCommand {
     func run() async throws {
         let creds = try credentials.resolve()
         let limit = limit
-        try await Session.run(credentials: creds) { session in
+        try await Session.run(credentials: creds, command: "chats") { session in
             try await session.resume()
             let client = session.client
             try await ChatList.loadAll(client)
