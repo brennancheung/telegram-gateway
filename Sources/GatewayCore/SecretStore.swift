@@ -7,11 +7,12 @@ import Synchronization
 /// |---|---|
 /// | `FileSecretStore` (`<TGW_HOME>/secrets.json`, mode 0600) | every `swift build` binary (`tgw`, `GatewayDaemon`) by default |
 /// | `KeychainSecretStore` (login Keychain) | the shipped, stably-signed menu bar app and daemon, opted in with `"secrets": "keychain"` in config.json |
-/// | `MemorySecretStore` | tests |
+/// | `InMemorySecretStore` | tests |
 ///
 /// Why: an ad-hoc-signed binary is a new identity to the Keychain after every rebuild, so
 /// each `SecItemCopyMatching` of an item another build created shows the owner a password
-/// prompt. Development therefore never touches the Keychain.
+/// prompt. Development therefore never touches the Keychain — not even to migrate items an
+/// earlier build left there; the owner logs in fresh and the file store fills itself.
 public protocol SecretStore: Sendable {
     func read(_ account: String) throws -> Data?
     func write(_ account: String, _ data: Data) throws
@@ -68,19 +69,6 @@ public enum Secrets {
         try store.write(adminTokenAccount, Data(token.utf8))
         return token
     }
-
-    /// Copies both secrets from one store to another (e.g. Keychain → file). Returns the
-    /// accounts that were copied. Reading the Keychain may prompt the owner; only run this
-    /// when they asked for it.
-    public static func migrate(from source: any SecretStore, to destination: any SecretStore) throws -> [String] {
-        var copied: [String] = []
-        for account in [databaseKeyAccount, adminTokenAccount] {
-            guard try destination.read(account) == nil, let data = try source.read(account) else { continue }
-            try destination.write(account, data)
-            copied.append(account)
-        }
-        return copied
-    }
 }
 
 /// `secrets.json`: `{ "<account>": "<base64>" }`, owner-readable only, written atomically.
@@ -136,7 +124,7 @@ public struct FileSecretStore: SecretStore {
     }
 }
 
-/// The login Keychain (see `Keychain`). Opt-in; never used by tests.
+/// The login Keychain (see `Keychain`). Opt-in via config.json; tests never construct it.
 public struct KeychainSecretStore: SecretStore {
     public init() {}
     public var description: String { "login Keychain, service \(Keychain.service)" }
@@ -149,7 +137,7 @@ public struct KeychainSecretStore: SecretStore {
 }
 
 /// For tests.
-public final class MemorySecretStore: SecretStore {
+public final class InMemorySecretStore: SecretStore {
     private let items = Mutex<[String: Data]>([:])
     public init() {}
     public var description: String { "memory" }

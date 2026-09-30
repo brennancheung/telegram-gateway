@@ -43,7 +43,7 @@ struct DecodingTests {
     func lenientEnums() throws {
         let health = try decode(Health.self, """
         { "status": "degraded", "version": "9", "started_at": "2026-09-29T09:00:12Z", "time": "2026-09-29T14:03:37Z",
-          "tdlib": { "auth_state": "wait_registration", "connection_state": "teleporting" }, "head_seq": 0 }
+          "tdlib": { "auth_state": "wait_teleport", "connection_state": "teleporting" }, "head_seq": 0 }
         """)
         #expect(health.tdlib.authState == .unknown)
         #expect(health.tdlib.connectionState == .unknown)

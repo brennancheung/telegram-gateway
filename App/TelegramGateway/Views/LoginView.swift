@@ -47,7 +47,9 @@ struct LoginView: View {
             // docs/api.md: poll GET /v1/admin/auth every 2s while a QR code is displayed.
             while !Task.isCancelled {
                 await model.refreshAuth()
-                if !usePhone, model.authState == .waitPhoneNumber, !model.loginBusy {
+                // Ask for a QR once per attempt; after a failure (e.g. Telegram rejecting the
+                // api_id) wait for the owner's New code instead of retrying every 2s.
+                if !usePhone, model.authState == .waitPhoneNumber, !model.loginBusy, model.loginError == nil {
                     await model.requestQR()
                 }
                 try? await Task.sleep(for: .seconds(2))
@@ -80,6 +82,10 @@ struct LoginView: View {
                         .interpolation(.none)
                         .frame(width: 200, height: 200)
                         .accessibilityLabel("QR code for Telegram login")
+                } else if model.loginError != nil {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
                 } else {
                     ProgressView()
                 }
@@ -251,6 +257,21 @@ struct LoginView: View {
     }
 
     // MARK: Other
+
+    @ViewBuilder
+    private var registrationStep: some View {
+        Text("No Telegram account for this number")
+            .font(.headline)
+        Text("Telegram would create a new account for it, which the gateway never does. Check the number, or log in with the QR code from a phone that already has your account.")
+            .font(.callout)
+            .fixedSize(horizontal: false, vertical: true)
+        HStack {
+            Spacer()
+            Button("Start over") { Task { await model.requestQR(); usePhone = false } }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.loginBusy)
+        }
+    }
 
     @ViewBuilder
     private var otherStep: some View {

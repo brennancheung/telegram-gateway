@@ -296,36 +296,24 @@ locks `td.binlog` and the second process fails or corrupts it. Stop and unregist
 the gateway: Setup → Stop and unregister, or `launchctl bootout
 gui/$(id -u)/com.brennancheung.telegram-gateway.daemon`.
 
-## Spec gaps found while building (for docs/api.md and the daemon)
+## What the app relies on beyond the first api.md
 
-- **Login POST response bodies are unspecified.** `POST /v1/admin/auth/{qr,phone,code,logout}`
-  say only which state they move to. The app decodes the body as the `GET /v1/admin/auth`
-  object if it is one, and otherwise re-reads `GET /v1/admin/auth`. Returning the auth object
-  from every login POST would save a round trip and should be documented.
-- **`password_hint` is only returned on a wrong password.** The Login screen wants the hint
-  while showing the password field for the first time. The app reads `password_hint` from
-  `GET /v1/admin/auth` when present (and from `error.details.password_hint` / a top-level
-  `password_hint` on the 400). Proposed: include `password_hint` in `GET /v1/admin/auth` in
-  state `wait_password`.
-- **`phone_hint` is undefined.** The app shows it as "Telegram sent a code for <phone_hint>".
-  It also reads an optional `code_type` (`sms`, `call`, `telegram_message`) to say where the
-  code went. Both should be defined or dropped.
-- **E-mail login states.** `tdlib.auth_state` lists no `wait_email_address` /
-  `wait_email_code`, and the daemon currently maps TDLib's e-mail states to
-  `wait_phone_number`, so an account that uses login e-mail codes would loop on the QR/phone
-  step. The app implements the two states with `POST /v1/admin/auth/email
-  { "email_address" }` and `POST /v1/admin/auth/email_code { "code" }` as proposed endpoints;
-  they need to exist in the daemon and in api.md, or the states need documenting as
-  unsupported.
-- **`wait_registration`** (a phone number with no Telegram account) is not in the state list;
-  the daemon maps it to `wait_phone_number` and the owner would see a wrong-number loop. An
-  explicit state or error would let the app say "no account for this number".
-- **Events "today".** `/v1/admin/status` has `events_last_hour` and `head_seq`; there is no
-  per-day count. The Status screen shows last hour and total. An `events_today` field would
-  match the design's activity view better.
-- **Pause / resume monitoring** does not exist in the API, so the menu has no such entry.
-- **`daemon_path`** is a new key the app writes into `config.json`. The daemon ignores keys it
-  does not know, which is what api.md's "unknown fields must be ignored" implies for config
-  too, but the key should be listed under "Port and configuration".
-- **`GET /v1/admin/access-requests` when `requested_chats` was `"any"`** returns
-  `requested_chats: "any"` (a string) — the app decodes both forms; worth an explicit example.
+These were gaps when the app was written; the daemon and api.md now cover them, and the app
+tolerates their absence where noted.
+
+- Every login POST (`qr`, `phone`, `code`, `password`, `email`, `email_code`, `logout`)
+  returns the `GET /v1/admin/auth` object. If a body does not decode as one, the app re-reads
+  `GET /v1/admin/auth`.
+- `GET /v1/admin/auth` carries `phone_hint` and `code_type` (`sms`, `call`,
+  `telegram_message`, …) in `wait_code` and `password_hint` in `wait_password`; a wrong
+  password is `400` with `error.details.reason = "wrong_password"` and
+  `error.details.password_hint`.
+- States `wait_email_address`, `wait_email_code` (endpoints `POST /v1/admin/auth/email
+  { "email_address" }`, `POST /v1/admin/auth/email_code { "code" }`) and `wait_registration`
+  (number with no account; the app explains and offers Start over).
+- `/v1/admin/status.events_today` (optional in the app; the row is hidden when absent).
+- `daemon_path` in `config.json` is tolerated by the daemon and listed in api.md.
+- `secrets.json` holds `admin-token` base64-encoded (the app also accepts a raw `tgw_…`).
+- There is no pause/resume-monitoring call, so the menu has no such entry.
+- `requested_chats` in `GET /v1/admin/access-requests` is a list or the string `"any"`; the
+  app decodes both.

@@ -163,11 +163,11 @@ file store existed. Rules that follow:
   in a temporary directory).
 - **Development binaries never read the Keychain unless `config.json` says so.** Leave
   `secrets` unset while developing.
+- **No migration from the Keychain.** Items an earlier build left there (`tdlib-db-key`,
+  `admin-token`) are simply left alone: reading them from a fresh build is exactly the prompt
+  we are avoiding. Log in again and the file store fills itself.
 - `tgw secrets` shows which store is active and which keys exist (never the values);
-  `tgw secrets regenerate-admin-token` replaces the token; `tgw secrets import-keychain`
-  copies items an earlier build left in the Keychain into the file store — it is the one
-  command that does read the Keychain, so expect a prompt, and run it only if you want to
-  keep that login rather than logging in again.
+  `tgw secrets regenerate-admin-token` replaces the token.
 
 **One TDLib owner.** TDLib locks `td.binlog`; a second instance fails to start or corrupts
 the log. `daemon.lock` enforces this: the daemon holds it while running, a direct `tgw`
@@ -410,7 +410,7 @@ Sources/CTDLib/            C module: module.modulemap + CTDLib.h including td_js
 Sources/TDLibClient/       actor TDLibClient, AuthState, TDLibParameters, TDLibError, Receiver
 Sources/QRCode/            QR encoder (byte mode, versions 1–40) and terminal rendering
 Sources/GatewayCore/       the domain, testable without an account:
-  Paths, Config, SecretStore (file / Keychain / memory), Keychain, InstanceLock, Identifiers, Clock (System/Manual), JSONValue, Models
+  Paths, Config, SecretStore (FileSecretStore default, KeychainSecretStore opt-in, InMemorySecretStore for tests), Keychain, InstanceLock, Identifiers, Clock (System/Manual), JSONValue, Models
   Store (GRDB, migrations), EventLog, Grants, AccessRequests, APIError
   TDLibRequesting (the protocol TDLib hides behind), Translator (TDLib JSON → events.md objects)
   Monitor (updates → log, cursors, backfill, folders), WebhookDispatcher, MediaCache, RateLimiter
@@ -449,7 +449,7 @@ retry ladder in tests without waiting.
   different applications from each other. Reading an item another build created shows a
   "wants to use your confidential information" dialog. That is why secrets live in
   `secrets.json` in development (see "Secrets" above) and only the signed app opts into
-  the Keychain. `tgw secrets import-keychain` is the one development command that reads it.
+  the Keychain. No development command reads it.
 - **SwiftPM header layout.** SwiftPM rejects an umbrella header with a directory next to it,
   which is why `Sources/CTDLib/include` carries an explicit `module.modulemap`.
 - **`[String: Any]` under Swift 6.** JSON objects are not `Sendable`; the library returns

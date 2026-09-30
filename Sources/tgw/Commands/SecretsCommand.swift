@@ -7,8 +7,8 @@ import GatewayCore
 struct SecretsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "secrets",
-        abstract: "Show where secrets live, regenerate the admin token, or import items from the Keychain.",
-        subcommands: [Show.self, RegenerateAdminToken.self, ImportKeychain.self],
+        abstract: "Show where secrets live or regenerate the admin token.",
+        subcommands: [Show.self, RegenerateAdminToken.self],
         defaultSubcommand: Show.self
     )
 
@@ -35,25 +35,6 @@ struct SecretsCommand: AsyncParsableCommand {
             let store = Secrets.resolve(config: config, paths: paths)
             try Secrets.regenerateAdminToken(store)
             print("new admin token written to \(store.description); restart the daemon (`tgw daemon uninstall` then `install`, or launchctl kickstart)")
-        }
-    }
-
-    struct ImportKeychain: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(
-            commandName: "import-keychain",
-            abstract: "Copy tdlib-db-key and admin-token from the login Keychain into the file store (asks macOS for Keychain access, which may prompt).",
-            discussion: "Only for a machine where an earlier build stored secrets in the Keychain. Existing file-store entries are kept."
-        )
-
-        func run() async throws {
-            let paths = Paths.resolve()
-            let file = FileSecretStore(path: paths.secrets)
-            let copied = try Secrets.migrate(from: KeychainSecretStore(), to: file)
-            if copied.isEmpty {
-                print("nothing to import (the file store already has both, or the Keychain has neither)")
-            } else {
-                print("imported \(copied.joined(separator: ", ")) into \(file.path.path)")
-            }
         }
     }
 }
