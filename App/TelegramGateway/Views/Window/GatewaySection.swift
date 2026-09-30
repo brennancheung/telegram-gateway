@@ -146,7 +146,7 @@ struct GatewaySection: View {
             Text(label)
                 .font(TypeScale.body)
                 .foregroundStyle(.secondary)
-            Text(value)
+            Text((value as NSString).abbreviatingWithTildeInPath)
                 .font(TypeScale.secondary)
                 .lineLimit(2)
                 .truncationMode(.middle)
