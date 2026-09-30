@@ -9,7 +9,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.brennancheung.telegram-gateway</string>
+    <string>local.telegram-gateway</string>
     <key>ProgramArguments</key>
     <array>
         <string>__BINARY__</string>

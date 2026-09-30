@@ -21,7 +21,7 @@ actor FakeAPIClient: APIClient {
         case loggedIn
         /// Logged in, nothing monitored, no requests, no grants.
         case loggedInEmpty
-        /// Logged in, monitoring, apps connected and healthy, nothing waiting for the owner.
+        /// Logged in, monitoring, apps connected and healthy, nothing waiting for the user.
         case loggedInQuiet
         /// Logged in, but Telegram's connection is down for the moment.
         case reconnecting
@@ -78,7 +78,7 @@ actor FakeAPIClient: APIClient {
 
     func setFailure(_ error: APIClientError?) { failure = error }
 
-    /// Simulates the owner scanning the QR code on the phone.
+    /// Simulates the QR code being scanned on the phone.
     func simulateQRScanned() {
         guard authState == .waitQRConfirmation else { return }
         authState = has2FA ? .waitPassword : .ready
@@ -95,7 +95,7 @@ actor FakeAPIClient: APIClient {
 
     func adminStatus() async throws -> AdminStatus {
         try gate()
-        let account = authState == .ready ? Account(userId: "123456789", displayName: "Brennan Cheung", username: "brennan", phoneLast4: "4567") : nil
+        let account = authState == .ready ? Account(userId: "123456789", displayName: "Ada Lovelace", username: "ada", phoneLast4: "4567") : nil
         let paused = grantsStore.filter { $0.webhook?.state == .paused }.count
         let active = grantsStore.filter { $0.webhook?.state == .active }.count
         let retrying = grantsStore.filter { $0.webhook?.state == .retrying }.count
@@ -371,7 +371,7 @@ enum Fixtures {
         Chat(id: "-1002222222222", type: .supergroup, title: "Swift Forums Digest", username: nil, memberCount: 540, isMonitored: false, photo: nil),
         Chat(id: "-987654321", type: .basicGroup, title: "Family", username: nil, memberCount: 6, isMonitored: false, photo: nil),
         Chat(id: "123456789", type: .private, title: "Alice", username: "alice", memberCount: nil, isMonitored: false, photo: nil),
-        Chat(id: "-1003333333333", type: .channel, title: "Volgenic Announcements", username: "volgenic", memberCount: 2210, isMonitored: false, photo: nil),
+        Chat(id: "-1003333333333", type: .channel, title: "Open Source Weekly", username: "opensourceweekly", memberCount: 2210, isMonitored: false, photo: nil),
     ]
 
     static let folders: [Folder] = [
@@ -388,7 +388,7 @@ enum Fixtures {
             requestedChatsStatus: [
                 RequestedChatStatus(chatId: "-1001234567890", title: "Acme Product Updates", isMonitored: true),
                 RequestedChatStatus(chatId: "-1001987654321", title: "Acme Support", isMonitored: true),
-                RequestedChatStatus(chatId: "-1003333333333", title: "Volgenic Announcements", isMonitored: false),
+                RequestedChatStatus(chatId: "-1003333333333", title: "Open Source Weekly", isMonitored: false),
             ],
             webhookUrl: "https://analytics.example.com/tgw/events",
             createdAt: Date().addingTimeInterval(-120), expiresAt: Date().addingTimeInterval(13 * 60)),

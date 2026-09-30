@@ -6,7 +6,7 @@ import Logging
 import ServiceLifecycle
 import TDLibClient
 
-/// The gateway daemon (docs/design.md "Gateway daemon"): the one TDLib owner, the event log,
+/// The gateway daemon (docs/architecture.md "The gateway service"): the one process that owns TDLib, the event log,
 /// the HTTP + WebSocket API and webhook delivery. Started by launchd; `GatewayDaemon --verbose`
 /// in a terminal for development.
 @main

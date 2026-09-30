@@ -40,7 +40,7 @@ struct TelegramGatewayApp: App {
         }
         .defaultSize(width: PanelSize.window.width, height: PanelSize.window.height)
         .windowResizability(.contentMinSize)
-        // The window opens when the owner asks for it, or when setup or sign-in is needed;
+        // The window opens when the user asks for it, or when setup or sign-in is needed;
         // never just because the app launched.
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)

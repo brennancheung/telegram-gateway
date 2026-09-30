@@ -1,12 +1,12 @@
 #!/bin/sh
-# Started by launchd for the LaunchAgent com.brennancheung.telegram-gateway.daemon (the plist
+# Started by launchd for the LaunchAgent local.telegram-gateway.daemon (the plist
 # is in this app bundle under Contents/Library/LaunchAgents). It locates the GatewayDaemon
 # binary and replaces itself with it, so launchd supervises the daemon directly.
 #
 # Where the binary comes from, in order:
 #   1. $TGW_DAEMON_PATH (environment; launchd agents normally have none)
 #   2. "daemon_path" in ~/Library/Application Support/TelegramGateway/config.json — written by
-#      the menu bar app when the owner clicks "Start gateway" (development: <repo>/.build/debug/GatewayDaemon)
+#      the menu bar app when it starts the gateway (development: <repo>/.build/debug/GatewayDaemon)
 #   3. Contents/MacOS/GatewayDaemon inside the bundle (a shipped build; not bundled yet).
 #      This script lives in Contents/Resources: codesign rejects unsigned scripts in MacOS.
 #

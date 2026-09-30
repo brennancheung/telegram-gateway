@@ -40,7 +40,7 @@ struct Session: Sendable {
 
     /// Answers `waitTdlibParameters`, then waits for `ready`. Fails with a clear message if
     /// the account is not logged in (`tgw login` is the fix). Once ready, tells TDLib the
-    /// account is not online so the owner's status is never affected.
+    /// account is not online so your online status is never affected.
     func resume() async throws {
         var seen = 0
         while true {

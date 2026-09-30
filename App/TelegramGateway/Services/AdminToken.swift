@@ -8,7 +8,7 @@ import Security
 /// The login Keychain is an opt-in alternative (`"secrets": "keychain"` in `config.json`,
 /// service `TelegramGateway`, account `admin-token`) meant for a shipped, stably-signed build.
 /// Development builds must not use it: every ad-hoc-signed rebuild is a new identity to the
-/// Keychain, so each `SecItem*` read prompts the owner for their password. Nothing in tests,
+/// Keychain, so each `SecItem*` read prompts for the login password. Nothing in tests,
 /// previews or the default development path calls `SecItem*`.
 enum AdminToken {
     enum Source: String, Sendable {

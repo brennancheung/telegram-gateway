@@ -9,8 +9,8 @@ import SwiftUI
 ///
 /// - `--only <prefix>` renders a subset (`--only w1`, `--only p`).
 /// - `--key` makes each snapshot window the key window of an active app, so native controls
-///   (prominent buttons, checkboxes, selection) are drawn in the accent colour as the owner
-///   sees them. It takes keyboard focus for the duration of the run; without it those
+///   (prominent buttons, checkboxes, selection) are drawn in the accent colour as they look
+///   in use. It takes keyboard focus for the duration of the run; without it those
 ///   controls are drawn grey, the way AppKit draws any inactive window.
 /// - `--shoot` leaves the main-window states to be photographed from outside: for each one
 ///   the app writes `<directory>/.shoot` ("<window number> <file name>") and waits until the
@@ -73,7 +73,7 @@ enum SnapshotRunner {
         return model
     }
 
-    /// Every state of both surfaces, in the order the owner meets them.
+    /// Every state of both surfaces, in the order they are met.
     static let cases: [Case] = [
         // The menu bar popover.
         Case(name: "p01-popover-healthy", surface: .popover) { AppModel.preview(.loggedInQuiet) },

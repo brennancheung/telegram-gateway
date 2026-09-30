@@ -83,7 +83,7 @@ struct GatewayConfig: Sendable, Equatable {
     }
 
     /// Writes `updates` into the file, keeping every other key. Creates the directory and the
-    /// file if needed. The file is owner-readable only because it holds `api_hash`.
+    /// file if needed. The file is readable only by the current user because it holds `api_hash`.
     @discardableResult
     static func merge(_ updates: [String: Any]) throws -> GatewayConfig {
         var raw = try loadRaw()

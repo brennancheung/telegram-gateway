@@ -1,11 +1,11 @@
 import Foundation
 
-// Owner-facing words. The API speaks in identifiers (`messages:read`, `basic_group`,
-// timestamps); the owner reads plain language. Every screen goes through these functions so
+// The words shown on screen. The API speaks in identifiers (`messages:read`, `basic_group`,
+// timestamps); the screen uses plain language. Every screen goes through these functions so
 // one thing is always called one name. Unit-tested in WordingTests.
 
-/// What a state means to the owner. Colour is derived from this and nothing else:
-/// `ok` green, `attention` amber (waiting, or needs the owner), `failed` red.
+/// What a state means to the person looking at it. Colour is derived from this and nothing else:
+/// `ok` green, `attention` amber (waiting, or needs the user), `failed` red.
 enum Tone: Equatable, Sendable {
     case neutral
     case ok
@@ -103,7 +103,7 @@ enum Wording {
         return "\(Int((seconds / 60).rounded(.up))) min left"
     }
 
-    /// The host of a webhook URL, which is all the owner needs to recognise it.
+    /// The host of a webhook URL, which is all anyone needs to recognise it.
     static func host(of urlString: String) -> String {
         URLComponents(string: urlString)?.host ?? urlString
     }
@@ -161,7 +161,7 @@ extension Grant {
     /// Its delivery stopped or is failing.
     var needsAttention: Bool { webhook?.state == .paused || webhook?.state == .retrying }
 
-    /// The trailing state of an app in a list: quiet when fine, amber when it needs the owner.
+    /// The trailing state of an app in a list: quiet when fine, amber when it needs the user.
     var state: (tone: Tone, text: String) {
         if let webhook {
             switch webhook.state {

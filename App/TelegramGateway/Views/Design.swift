@@ -9,7 +9,7 @@ import SwiftUI
 //            a card, inset to the text; 16pt between cards
 //   action   at most one prominent button per screen; when a screen scrolls, actions live
 //            in a fixed bar at the bottom
-//   colour   state only: green fine (a small quiet dot), amber waiting or needs the owner,
+//   colour   state only: green fine (a small quiet dot), amber waiting or needs the user,
 //            red failed
 
 enum PanelSize {
@@ -264,7 +264,7 @@ struct FactRow<Value: View>: View {
 }
 
 /// The trailing state of an app: a quiet green dot with a time when fine, amber words when
-/// it needs the owner.
+/// it needs the user.
 struct TrailingState: View {
     var tone: Tone
     var text: String

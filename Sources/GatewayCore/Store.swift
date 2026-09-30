@@ -1,7 +1,7 @@
 import Foundation
 import GRDB
 
-/// The gateway's own SQLite database, `<home>/gateway.sqlite` (docs/design.md). One actor
+/// The gateway's own SQLite database, `<home>/gateway.sqlite` (docs/architecture.md "Data on disk"). One actor
 /// owns the connection; every other component goes through it. WAL journal mode so readers
 /// never block the monitor's writes.
 ///

@@ -641,7 +641,7 @@ public struct Folder: Codable, Sendable, Equatable {
     }
 }
 
-/// What the owner chose to monitor: explicit chats plus folders (docs/api.md
+/// What the user chose to monitor: explicit chats plus folders (docs/api.md
 /// "Admin: chat list, folders, monitored set").
 public struct MonitoredSet: Codable, Sendable, Equatable {
     public var chatIds: [Int64]

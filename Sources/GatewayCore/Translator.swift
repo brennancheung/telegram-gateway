@@ -16,7 +16,7 @@ public struct TranslatedMessage: Sendable, Equatable {
 
 /// What one TDLib update means to the gateway. The monitor turns these into log entries.
 public enum Translated: Sendable, Equatable {
-    /// A message arrived (or finished sending, for the owner's own).
+    /// A message arrived (or finished sending, for the user's own).
     case messageNew(TranslatedMessage)
     /// A message's content changed; `editDate` is the dedupe key with `updateMessageContent`.
     case messageEdited(TranslatedMessage)
@@ -74,7 +74,7 @@ public actor Translator {
         switch update.type {
         case "updateNewMessage":
             guard let message = update.object("message") else { return [] }
-            // A message the owner is still sending has a local id; the final one arrives with
+            // A message the user is still sending has a local id; the final one arrives with
             // updateMessageSendSucceeded.
             if message.object("sending_state") != nil { return [] }
             return [.messageNew(try await translateMessage(message))]

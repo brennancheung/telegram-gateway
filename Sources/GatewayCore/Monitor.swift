@@ -4,7 +4,7 @@ import TDLibClient
 
 /// Watches the monitored chats: consumes TDLib updates, keeps the chat and folder caches,
 /// appends events to the log, maintains per-chat cursors and backfills after a gap
-/// (docs/design.md "Delivery"). Never calls `viewMessages` or `openChat`.
+/// (docs/architecture.md "Delivery guarantees"). Never calls `viewMessages` or `openChat`.
 public actor Monitor {
     public static let memberCountCoalesce: TimeInterval = 5 * 60
 

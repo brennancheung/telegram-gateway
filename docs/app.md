@@ -1,552 +1,546 @@
-# Menu bar app
+# The menu bar app
 
-The menu bar app (`App/`) is the owner's control panel for the gateway. It is a SwiftUI
-application that talks to the gateway daemon over the local HTTP API in [api.md](api.md) with
-the admin token. It has two surfaces, and each does one kind of job:
+Telegram Gateway is a macOS menu bar app that sets up and looks after **the gateway**: the
+background service that signs in to your Telegram account and passes messages from the chats
+you choose to the apps you approve. You use it to connect the gateway to Telegram, pick the
+chats it monitors, and decide which apps may read them. The gateway keeps running when the
+menu bar app is closed.
 
-- **The menu bar popover** — a glance and three actions. How is it going, does anything
-  need me, open the window. It opens from the paper-plane icon in the menu bar, is about
-  300pt wide and only as tall as its content. It has no tabs, no forms and no lists to
-  manage. A dot on the icon means an access request is waiting.
-- **The main window** — everything with detail. A normal resizable macOS window: first-run
-  setup and sign-in as a focused flow, then a sidebar with **Overview**, **Chats**, **Apps**
-  and **Gateway**.
+In this document, "an app" always means a program that consumes the gateway (the thing that
+asks for access). The program described here is "the menu bar app" or "Telegram Gateway".
 
-## Terms
+It has two surfaces:
 
-- **Gateway daemon** (`GatewayDaemon`): the background process from [design.md](design.md)
-  that holds the Telegram login and serves the API. The app never loads TDLib itself. On
-  screen it is always called **the gateway**.
-- **launchd**: the macOS service manager. A **LaunchAgent** is a launchd service that runs
-  as the logged-in user; launchd starts it at login and restarts it if it exits.
-- **`SMAppService`**: Apple's API (framework `ServiceManagement`) through which an app
-  registers a LaunchAgent that ships inside its own bundle. Registered agents appear in
-  System Settings → General → Login Items & Extensions, and macOS may ask the owner to
-  allow them once.
-- **Admin token**: the one token that may call `/v1/admin/*` (api.md "Authentication"). The
-  daemon generates it on first run and writes it to the **secrets file**
-  `~/Library/Application Support/TelegramGateway/secrets.json` (mode 0600, JSON
-  `{"admin-token": "<base64 of the token>"}`); the app reads it from there. The login
-  Keychain (service `TelegramGateway`, account `admin-token`) is an opt-in alternative for a
-  shipped, stably-signed build, selected with `"secrets": "keychain"` in `config.json`.
-  Development builds must not use it: every ad-hoc-signed rebuild is a new identity to the
-  Keychain, so each read would prompt the owner for their password. Tests, previews and
-  snapshots never touch it.
-- **`api_id` / `api_hash`**: the identity of this software with Telegram, registered once at
-  https://my.telegram.org ([development.md](development.md) "Register api_id / api_hash"). On
-  screen: **API ID**, **API hash**, together "the Telegram key".
-- **Activation policy**: whether macOS treats a process as a regular app (Dock icon, Cmd-Tab,
-  its own menu bar) or as an accessory that lives only in the menu bar. This app switches
-  between the two (see "Window behaviour").
+- **The menu bar popover** opens from the paper-plane icon. It is for a glance: how things
+  are going, whether anything needs you, and a button to open the window. A dot on the icon
+  means an app is waiting for your decision.
+- **The window** is for everything else: first-run setup, and then four sections —
+  **Overview**, **Chats**, **Apps** and **Gateway**.
 
-## Words the owner sees
+## Contents
 
-Both surfaces are written for the owner, not for a developer. Identifiers from the API never
-appear as text; they are tooltips at most. One mapping, in
-`App/TelegramGateway/Services/Wording.swift`, unit-tested in `WordingTests`:
+- [First run](#first-run)
+- [Everyday use](#everyday-use)
+- [How the gateway is started and kept running](#how-the-gateway-is-started-and-kept-running)
+- [Troubleshooting](#troubleshooting)
+- [For contributors](#for-contributors)
 
-| In the API and the code | On screen |
+---
+
+## First run
+
+The first time you launch Telegram Gateway, the window opens by itself and takes you through
+three steps. A quiet "Step 1 of 3" above each title shows where you are.
+
+### Before you start: an API ID and hash
+
+Telegram asks every program that connects to it to identify itself with an **API ID** (a
+number) and an **API hash** (32 characters, digits and the letters a–f). Together they are
+the program's key; they are not tied to your account and they are free.
+
+1. Go to https://my.telegram.org and log in with your phone number.
+2. Open **API development tools** and create an application. Any name works; choose the
+   platform **Desktop**.
+3. Keep the page open: you need the **App api_id** and **App api_hash** it shows.
+
+Use your own pair. Reusing another program's key is a known way to get an account flagged.
+
+### Step 1: Connect
+
+The window shows **Connect to Telegram** with two fields, **API ID** and **API hash**, and a
+link to my.telegram.org. Paste both values and click **Continue**.
+
+Continue saves the key and starts the gateway. You do not choose how it is started; see
+[How the gateway is started and kept running](#how-the-gateway-is-started-and-kept-running).
+macOS may show a notification that Telegram Gateway added an item that can run in the
+background. That is the gateway; setup continues without waiting for you to act on it.
+
+If it goes wrong:
+
+- **A red line under a field** means the value cannot be right: the API ID must be a number,
+  and the API hash must be exactly 32 characters.
+- **A red card "The gateway didn't start"** gives the reason in one line and a **Show log**
+  link. The button becomes **Try again**. The usual reasons are in
+  [Troubleshooting](#troubleshooting).
+
+### Step 2: Sign in
+
+The window shows **Scan to sign in** with a QR code. On your phone:
+
+1. Open Telegram.
+2. Go to Settings → Devices → Link Desktop Device.
+3. Point the camera at the code.
+
+The code renews itself about every 30s; you do not need to do anything. If your account has
+**two-step verification** (an extra password you set in Telegram under Settings → Privacy and
+Security), the window then asks for that password and shows your hint under the field.
+
+If you cannot scan, click **Use phone number instead**. You type your number with its country
+code, Telegram sends a login code to your other devices or by SMS, and you type the code.
+Two-step verification, if you have it, comes next as above.
+
+If it goes wrong:
+
+- **"Couldn't get a code"** replaces the QR code when the gateway could not obtain one. The
+  reason is underneath, and **Refresh** tries again. "Telegram doesn't recognise the API ID
+  and hash" means the key from step 1 is wrong: click **Change the Telegram key…** at the
+  bottom of the window.
+- **"That code isn't right."** or **"That password isn't right."** appears under the field;
+  type it again. **Back** and **Start over** return to the beginning of sign-in.
+- **"No Telegram account for this number"**: the gateway only signs in to an account that
+  already exists. It never creates one.
+
+### Step 3: Choose chats
+
+Once you are signed in, the window shows its sidebar with **Chats** selected and a card:
+"Pick the chats to monitor. Nothing else leaves the gateway."
+
+Tick the chats and folders you want and click **Save**. Only messages in monitored chats are
+stored and passed on; everything else in your account stays where it is. You can change the
+set at any time. See [Chats](#chats) for the details.
+
+---
+
+## Everyday use
+
+### The popover
+
+Click the paper-plane icon in the menu bar. From top to bottom:
+
+- **The state line.** When all is well it reads, for example, "Monitoring 3 chats" with
+  "37 messages in the last hour · 4,812 total" beneath. When something is wrong the card
+  turns amber or red and says what: "Not set up yet", "Not signed in", "Reconnecting…",
+  "Not monitoring any chats", "Gateway not running", "Can't control the gateway".
+- **Needs you.** Shown only when there is something for you to do: an app waiting for a
+  decision ("Community Analytics wants access"), a delivery that stopped ("Archive: delivery
+  paused"), or whatever keeps the gateway from working ("Sign in to Telegram", "Start the
+  gateway", "Choose chats to monitor"). Clicking a row opens the window at the place where
+  you deal with it.
+- **Open Telegram Gateway…** opens the window (or brings it to the front).
+- **Restart gateway** restarts the background service.
+- **Quit** quits the menu bar app. The line beneath says whether the gateway keeps running
+  (the normal case) or stops too (see [the in-app fallback](#in-plain-terms)).
+
+Colour always means state: green is fine, amber is waiting or needs you, red has failed.
+
+### Overview
+
+The first section of the window answers three questions.
+
+- **Is it working?** The same state line as the popover, across the top. When something is
+  wrong the card carries the one action that fixes it: **Choose chats**, **Start gateway**,
+  **Try again**, **Restart gateway**. "Reconnecting…" has no action; the gateway catches up
+  on missed messages by itself when Telegram is reachable again.
+- **Does anything need me?** A **Needs you** card appears only when it has something in it:
+  pending requests (**Review…**) and deliveries that stopped or are failing (**Resume**).
+- **Which apps are connected?** One row per app with access and its state: a green dot with
+  how long ago it last received something ("1m ago"), or amber "Paused" or "Failing".
+
+A line at the bottom shows the gateway's version and how long it has been running.
+
+### Chats
+
+A table of every chat and folder in your account, with a checkbox for what the gateway
+monitors.
+
+| Column | Shows |
 |---|---|
-| daemon, LaunchAgent, launchd | the gateway; "starts at login" |
-| scope `messages:read` | New messages |
-| scope `history:read` | Past messages |
-| scope `media:read` | Photos and files |
-| scope `chats:read` | Chat names and details |
-| scope `messages:send` | Send messages |
-| grant | an app that "has access" |
-| access request | "*App* wants access" |
-| webhook `paused` / `retrying` | "Delivery paused" / "Delivery failing" |
-| webhook URL | its host only (`analytics.example.com`) |
-| admin token | the gateway's "access key" |
-| port 41414 | `127.0.0.1:41414` (never grouped as 41,414), in the Gateway section only |
-| chat type | Channel, Group, Person |
+| Monitored | The checkbox. |
+| Chat | An icon for the kind of chat, and its title. |
+| Type | Folder, Channel (only admins post), Group, or Person (a one-to-one chat). |
+| Members | The member count, or the number of chats in a folder. |
+| Username | The public handle, such as @acmeupdates, when the chat has one. |
 
-Telegram's own error codes are translated too (`API_ID_INVALID` → "Telegram doesn't
-recognise the API ID and hash…", `wrong_password` → "That password isn't right.").
+Click a column header to sort. The control in the toolbar switches between **Monitored**,
+**Folders** and **All**, and the search field filters by title or username. Unsorted,
+monitored rows come first.
 
-## The visual system
+**Folders.** A folder is one of the tabs you made in Telegram to group chats ("Product",
+"News"). Ticking a folder monitors whatever is in it: when you add a channel to the folder on
+your phone, the gateway starts monitoring it without another visit here, and when you remove
+one it stops. A chat that is covered by a ticked folder is shown ticked and locked, with
+"via Product folder" under its title.
 
-Both surfaces are built from the pieces in `App/TelegramGateway/Views/Design.swift`, so
-hierarchy reads the same everywhere.
+**Saving.** Ticks are a draft until you save. The bar at the bottom reads "3 monitored" until
+you change something, then "2 unsaved changes" with **Revert** and **Save** (Cmd-S). Saving
+replaces the whole monitored set at once. The gateway starts watching newly ticked chats
+within a few seconds. Messages sent before a chat was monitored are not collected
+retroactively; apps with the *Past messages* permission can still read them from Telegram.
 
-- **Type scale**: screen title 15 semibold; row title 13 medium; body 13; secondary 11 in the
-  secondary colour; section label 11 semibold, sentence case, never caps, never underlined.
-  One size sits above it: the state line ("Monitoring 3 chats"), 20 semibold.
-- **Grouping**: related rows sit in one inset rounded card (quiet fill, 8pt radius, 12pt
-  padding). Dividers appear only between rows inside a card and are inset to the text. 16pt
-  between cards. No rule under a section label.
-- **Action**: at most one prominent button per screen; everything else is a plain or bordered
-  button or a link. Where a screen scrolls, its actions are in a bar fixed at the bottom.
-- **Colour means state only**: green = fine (a small dot), amber = waiting or needs the
-  owner, red = failed. A card is tinted amber or red only for an exception; routine
-  information is never coloured.
-- **Help text** appears only where it states a consequence, a constraint, a risk or a way
-  out.
-- **Controls**: the main window is a real key window and uses native controls
-  (`.borderedProminent`, native checkboxes, `Table`, sidebar list, toolbar search). The
-  popover's one prominent button is drawn by the app (`PrimaryButtonStyle`), because a menu
-  bar popover is not always the key window and AppKit greys prominent buttons in an inactive
-  one.
+When you stop monitoring a chat, every app that could read it loses it at once. If you
+monitor it again later, those apps get it back without a new approval.
 
-## Build and run
+### Apps
 
-Requirements: Xcode 26 (Swift 6.3) and, for anything past step 1, a built daemon
-(`swift build` in the repository root produces `.build/debug/GatewayDaemon`). XcodeGen is
-not required: `App/TelegramGateway.xcodeproj` is checked in and builds from a clean checkout.
-`App/project.yml` mirrors it for regenerating with `xcodegen generate` after structural
-changes; keep both in sync.
+An app gets access by asking the gateway for it; you approve or deny here. Nothing an app
+does on its own can give it access or widen what it has. The full model is in
+[grants.md](grants.md).
 
-```
-# Build (Debug, ad-hoc signed):
-xcodebuild -project App/TelegramGateway.xcodeproj -scheme TelegramGateway -configuration Debug build
+The section has a list on the left and the selected item on the right.
 
-# Build into App/.derived and launch (replaces a running copy):
-App/run.sh
+**The list.** **Wants access** comes first: each pending request with an amber dot and the
+time it has left ("13 min left"; a request expires 15:00 after it was made, and the app can
+simply ask again). **Has access** lists the apps you approved, each with its state and one
+line such as "2 chats · new messages, chat names".
 
-# Unit tests (49 tests: API decoding against api.md examples, login-link and QR handling,
-# owner wording, every flow over the fake gateway), ~1s:
-App/run.sh --test
+**Reviewing a request.** Select it to see who is asking and for what:
 
-# Render every state of both surfaces to PNG (see "Checking the UI without clicking"):
-App/snapshot.sh /tmp/shots
-```
+- the app's name and its own description of what it does with your messages;
+- **Wants** — the permissions it asked for;
+- **In** — the chats it asked for, with an amber "not monitored yet" on any the gateway does
+  not monitor;
+- **Sends to** — if the app receives messages by webhook (the gateway calls a web address
+  the app runs), the host of that address.
 
-Or open `App/TelegramGateway.xcodeproj` in Xcode and press Run. Every screen has a preview
-(`#Preview`) backed by `FakeAPIClient`, so the UI can be worked on without a daemon.
+**Deny** refuses the request. **Review…** opens a sheet, "Give Community Analytics access",
+where you decide exactly what it gets:
 
-### Where things are
+- **Chats.** The chats it asked for, ticked. Untick any you do not want to share. A chat
+  marked "Not monitored yet — approving starts monitoring it" is added to the monitored set
+  when you approve with it ticked. "Show 1 other monitored chat" lists the rest of what you
+  monitor, in case you want to give more than was asked. **Follow a folder instead** grants
+  one of your monitored folders: the app then sees whatever is in the folder, including chats
+  you add later.
+- **Can read.** One checkbox per permission it asked for. You can remove permissions; you
+  cannot add ones it did not ask for.
+
+The bar at the bottom summarises the decision ("3 chats · 3 permissions"). **Approve** gives
+the app its access; **Cancel** leaves the request pending.
+
+**What each permission means.** The identifier is what the app's developer sees in
+[api.md](api.md).
+
+| On screen | Identifier | The app can |
+|---|---|---|
+| New messages | `messages:read` | Receive every message in its chats as it arrives, with edits and deletions. |
+| Past messages | `history:read` | Read messages from before it was connected, as far back as your account can see. |
+| Photos and files | `media:read` | Download what is attached to those messages. Without it, the app sees that a message has a photo, not the photo. |
+| Chat names and details | `chats:read` | See the titles, usernames and member counts of its chats. |
+| Send messages | `messages:send` | Nothing yet. Sending is not available in this version, and a request for it is refused. |
+
+An app only ever sees chats that are both granted to it and currently monitored.
+
+**An app's detail.** Select an app under **Has access** to see what it can read, which chats
+it has (a chat you no longer monitor says so in amber), and how it receives messages:
+**Sends to** with the host and the last delivery for a webhook, or "Directly to the gateway"
+with when it was last connected.
+
+**A paused delivery.** If an app's webhook stops answering, the gateway keeps retrying for
+24:00:00 and then pauses. The app's row turns amber ("Paused"), it appears under Needs you,
+and its detail shows a card with the reason and how many messages are waiting. None are lost:
+**Resume** continues from where it stopped. While the gateway is still retrying, the row
+reads "Failing".
+
+**Revoking.** **Revoke access…** at the bottom of an app's detail ends its access after a
+confirmation. It takes effect immediately and cannot be undone: the app has to ask again and
+you approve again.
+
+### Gateway
+
+Everything about how the gateway itself runs. No other screen shows any of this.
+
+- **Gateway**: whether it is running, its local address (`127.0.0.1:41414` by default), its
+  version, when it started and for how long it has been up, and whether it starts at login.
+- **Controls**:
+  - **Restart** restarts the gateway.
+  - **Start at login** — **Turn on** registers the gateway with macOS so it starts when you
+    log in and keeps running after the menu bar app quits. **Turn off** stops it and removes
+    the registration.
+  - **Allow at login** appears when macOS is waiting for your permission; **Open settings**
+    takes you to the right place in System Settings.
+  - **Run inside this app** runs the gateway as part of the menu bar app instead. It stops
+    when the menu bar app quits.
+  - **Log** — **Show log** opens the gateway's log file.
+- **Telegram**: the account you are signed in as (for example Ada Lovelace, @ada) with
+  **Sign out…**, and the API ID and hash with **Edit…**.
+  - Signing out ends the Telegram session on this Mac. Your monitored chats, the apps you
+    approved and the messages already collected are kept; nothing new arrives until you sign
+    in again.
+  - Edit… reopens step 1 so you can paste a different key. Continue restarts the gateway
+    with it.
+- **Files**: where the gateway program, its settings file and its log are.
+
+---
+
+## How the gateway is started and kept running
+
+### In plain terms
+
+The gateway is a separate background program. Telegram Gateway (the menu bar app) starts it
+for you and you never have to choose how.
+
+- **The normal way: start at login.** The menu bar app registers the gateway with macOS as a
+  **login item** — something macOS starts when you log in and restarts if it stops. Once
+  registered, the gateway runs whether or not the menu bar app is open. macOS lists it under
+  System Settings → General → Login Items & Extensions → Allow in the Background, and may
+  ask you to allow it the first time.
+- **The fallback: run inside the app.** If macOS has not allowed the login item yet, or
+  registering fails, the menu bar app runs the gateway itself so that setup is never blocked.
+  A gateway run this way stops when you quit the menu bar app. The **Gateway** section shows
+  which way is in use ("Starts at login: Yes", "No, runs inside this app", or "Waiting for
+  your approval") and has the switch to change it.
+
+To move from the fallback to the normal way: allow Telegram Gateway in System Settings
+(**Allow at login → Open settings**), then in the Gateway section click **Run inside this app
+→ Stop** and **Start at login → Turn on**.
+
+### The technical detail
+
+A **LaunchAgent** is a service that launchd, the macOS service manager, runs as the logged-in
+user. The menu bar app carries one inside its bundle and registers it with Apple's
+`SMAppService` API, which is what makes it appear under Login Items.
+
+- The agent's property list is at `Contents/Library/LaunchAgents/
+  local.telegram-gateway.daemon.plist` in the app bundle. `RunAtLoad` and
+  `KeepAlive` are true, so launchd starts the gateway on registration and at every login and
+  restarts it if it exits (at most once every 10s).
+- Its program is `Contents/Resources/gateway-launcher`, a shell script that finds the gateway
+  binary (`GatewayDaemon`), creates `~/Library/Logs/TelegramGateway/`, and replaces itself
+  with the gateway, appending its output to `~/Library/Logs/TelegramGateway/daemon.log`.
+- The script looks for the binary in this order: the `TGW_DAEMON_PATH` environment variable;
+  `daemon_path` in `~/Library/Application Support/TelegramGateway/config.json` (written by
+  the menu bar app when it starts the gateway); `Contents/MacOS/GatewayDaemon` in the bundle.
+
+What **Continue**, **Start gateway** and **Try again** do:
+
+1. If the gateway already answers on its port, restart it so it rereads the key
+   (`launchctl kickstart -k gui/<uid>/local.telegram-gateway.daemon`).
+2. Otherwise register the LaunchAgent and wait up to 8s for the gateway to answer
+   `GET /v1/health`.
+3. If it does not answer — macOS wants approval first, registration failed, or the gateway
+   stayed silent — run it as a child process of the menu bar app and wait up to 8s again. A
+   registered agent that stayed silent is unregistered first, so only one gateway ever runs.
+   The child's output goes to `~/Library/Logs/TelegramGateway/daemon-foreground.log`.
+4. If that fails too, show "The gateway didn't start" with the last line of the log, or "It
+   didn't answer on port 41414."
+
+| You do | The menu bar app does | launchd does |
+|---|---|---|
+| Continue, Start gateway, Try again | the four steps above | loads the agent and runs it now and at every login |
+| Start at login → Turn on | writes `daemon_path`, registers the agent | the same |
+| Start at login → Turn off | unregisters the agent | stops the gateway and forgets the agent |
+| Run inside this app → Run / Stop | starts or stops a child process | nothing |
+| Restart gateway | `launchctl kickstart -k`, or restarts the child | restarts the gateway |
+| Quit | quits, stopping a child-process gateway | nothing: a registered gateway keeps running |
+
+The menu bar app talks to the gateway over its local HTTP API ([api.md](api.md)) with the
+gateway's **admin token**, the one credential allowed to call the administrative endpoints.
+The gateway writes it to `~/Library/Application Support/TelegramGateway/secrets.json`
+(readable only by you) on its first start, and the menu bar app reads it from there. Why the
+gateway is a separate process at all is explained in [architecture.md](architecture.md).
+
+---
+
+## Troubleshooting
+
+**"Gateway not running", or "The gateway didn't start".** The menu bar app asks the gateway
+how it is every few seconds and got no answer.
+
+- Read the one-line reason on the red card, then **Show log**.
+- "The gateway program is missing": the gateway binary is not where the menu bar app looks.
+  In a development checkout, build it with `swift build` ([development.md](development.md)).
+  Gateway → Files → Program shows the path in use.
+- "It didn't answer on port 41414": something else may be using the port (the log says
+  "Address already in use"), or `port` in
+  `~/Library/Application Support/TelegramGateway/config.json` is not the port you expect.
+- `launchctl print gui/$(id -u)/local.telegram-gateway.daemon` shows launchd's
+  view. `state = not running` with a non-zero `last exit code` means the gateway stops right
+  after starting; the log says why.
+- Gateway shows "Starts at login: Needs setting up again": the menu bar app was moved since
+  it registered the gateway. Click **Start at login → Turn on**.
+
+**"Can't control the gateway".** The gateway is running but the menu bar app cannot read its
+access key (the admin token in `secrets.json`).
+
+- If the gateway only just started, click **Check again**.
+- **Restart gateway** makes the gateway write a new key.
+- The line under the message names the problem when the file exists but cannot be read.
+
+**The QR code does not scan, or the phone says it expired.** Keep the window open while you
+scan; the code is renewed about every 30s and redrawn within 2s. If nothing happens after a
+successful scan, your account probably has two-step verification and the window is already
+asking for the password.
+
+**"Telegram doesn't recognise the API ID and hash".** The key from step 1 is wrong. Click
+**Change the Telegram key…** on the sign-in screen, or Gateway → Telegram → **Edit…**, and
+paste the values from my.telegram.org again.
+
+**The gateway stops when I quit Telegram Gateway.** It is running inside the app rather than
+as a login item. See [In plain terms](#in-plain-terms) for how to switch.
+
+**"Starts at login: Waiting for your approval".** Open System Settings → General → Login
+Items & Extensions and switch on **Telegram Gateway** under **Allow in the Background**, then
+click **Start at login → Turn on** in the Gateway section.
+
+**An app says it receives nothing.** Check, in this order: the chat is ticked in Chats; the
+chat is in the app's list in Apps (an unmonitored one is marked in amber); the app's state is
+not "Paused"; the state line does not say "Reconnecting…" or "Not signed in".
+
+**I quit the menu bar app and want to stop the gateway too.** Gateway → **Start at login →
+Turn off** stops it and keeps it from starting again. From a terminal:
+`launchctl bootout gui/$(id -u)/local.telegram-gateway.daemon`.
+
+**The window does not open.** It opens from **Open Telegram Gateway…** in the popover, from a
+Needs you row, and by itself when setup or sign-in is needed. If the paper-plane icon is
+missing from the menu bar, the menu bar app is not running; launch it again.
+
+---
+
+## For contributors
+
+Everything above describes what a person running the gateway sees. This section is for
+people working on the code in `App/`.
+
+### Project layout
 
 ```
 App/
   TelegramGateway.xcodeproj    Xcode project (synchronized folders: no file lists to maintain)
-  project.yml                  XcodeGen mirror of the project
-  run.sh                       build + launch, or --test
-  snapshot.sh                  renders every state of both surfaces to PNG
-  Support/Info.plist           LSUIElement, TGWRepositoryRoot ($(SRCROOT)/.., development only)
-  Support/gateway-launcher     the script launchd runs; finds and execs the daemon binary
-  Support/LaunchAgents/com.brennancheung.telegram-gateway.daemon.plist   the LaunchAgent
+  project.yml                  XcodeGen description of the same project
+  run.sh                       build and launch; --test runs the unit tests
+  snapshot.sh                  renders every screen state to PNG
+  Support/Info.plist           LSUIElement; TGWRepositoryRoot (development only)
+  Support/gateway-launcher     the script launchd runs
+  Support/LaunchAgents/…plist  the LaunchAgent
   TelegramGateway/
-    TelegramGatewayApp.swift   @main: MenuBarExtra (popover) and Window (main window) scenes,
-                               commands, menu bar icon with badge
-    API/                       APIClient protocol, HTTPAPIClient (URLSession), FakeAPIClient, models
-    Services/                  GatewayConfig (config.json), AdminToken (secrets.json; Keychain
-                               opt-in), DaemonManager (SMAppService + child process),
-                               QRCodeImage / LoginLink, Wording (owner vocabulary)
-    State/AppModel.swift       @Observable state: screen from facts, state line, "needs you",
-                               window requests, start flow, chat draft, approval draft, polling
+    TelegramGatewayApp.swift   the two scenes (MenuBarExtra, Window), commands, menu bar icon
+    API/                       APIClient protocol, HTTPAPIClient, FakeAPIClient, models
+    Services/                  GatewayConfig, AdminToken, DaemonManager, QRCodeImage, Wording
+    State/AppModel.swift       all state and decisions; views only render it
     Views/Design.swift         type scale, cards, rows, shared styles
-    Views/Popover/             PopoverView
-    Views/Window/              MainWindow (split view, WindowCoordinator), SetupFlow (connect,
-                               sign in), OverviewSection, ChatsSection (Table), AppsSection
-                               (list, detail, review sheet), GatewaySection
-    Debug/SnapshotRunner.swift `--snapshot` mode (Debug builds only)
-  TelegramGatewayTests/        Swift Testing suites
+    Views/Popover/             the popover
+    Views/Window/              MainWindow, SetupFlow, and one file per section
+    Debug/SnapshotRunner.swift --snapshot mode (Debug builds only)
+  TelegramGatewayTests/        unit tests (Swift Testing)
 ```
 
-Bundle id `com.brennancheung.telegram-gateway`, macOS 15+, Swift 6 language mode with strict
-concurrency, no third-party dependencies, ad-hoc code signature (`CODE_SIGN_IDENTITY = -`).
-App Sandbox and Hardened Runtime are off: the app spawns `launchctl` and (in development) the
-daemon, and reads a repository path.
+The app targets macOS 15, uses Swift 6 with strict concurrency, and has no third-party
+dependencies. It is ad-hoc signed, not sandboxed (it runs `launchctl` and, in development,
+the gateway binary).
 
-### How the app finds the daemon binary
+### Building and testing
 
-The daemon is not bundled yet. `DaemonLocator` tries, in order, and takes the first
-existing executable:
-
-1. `TGW_DAEMON_PATH` in the app's environment.
-2. `daemon_path` in `~/Library/Application Support/TelegramGateway/config.json`.
-3. `TGWRepositoryRoot` from the app's Info.plist (Xcode substitutes `$(SRCROOT)/..` at build
-   time, so a build from this checkout knows where `.build/debug/GatewayDaemon` is).
-4. Walking up from the app bundle's location to a directory containing `Package.swift`
-   (`App/run.sh` builds into `App/.derived`, inside the repository).
-5. `Contents/MacOS/GatewayDaemon` inside the app bundle — where a shipped build would carry it.
-
-Starting the gateway writes the resolved path to `config.json` as `daemon_path` so the
-launcher script (which launchd runs without the app's environment) finds the same binary.
-The Gateway section shows the path in use under Files → Program.
-
-**A shipped build** (TODO, not done): a build phase copies the release `GatewayDaemon` and
-`libtdjson.dylib` into `Contents/MacOS/`, `gateway-launcher`'s last fallback already points
-there, the daemon's `@rpath` must resolve to the bundled dylib, and the bundle is signed with a
-Developer ID (at which point `"secrets": "keychain"` becomes usable without prompts). Until
-then the app is a development tool that runs the daemon from the repository.
-
-## Window behaviour
-
-The app is an `LSUIElement` application: launched, it has no Dock icon and no menu bar of
-its own, only the paper-plane icon.
-
-- **The window opens on request**: "Open Telegram Gateway…" in the popover, a "Needs you"
-  row, or Cmd-, while the app is frontmost. There is exactly one main window (a SwiftUI
-  `Window` scene, default 820×560, minimum 700×460); asking again re-focuses it rather than
-  making another, and there is no New Window command.
-- **The window opens by itself** on first run and whenever setup or sign-in becomes
-  necessary, because neither can be done from the popover. It does so once per occurrence:
-  if the owner closes it while still signed out it stays closed, and the popover keeps
-  saying "Not signed in". Launching the app when everything is fine opens nothing.
-- **While the window is open the app is a regular app** (`NSApp.setActivationPolicy(.regular)`):
-  Dock icon, Cmd-Tab, and a normal menu bar with Edit and Window, so Cmd-V, Cmd-W and Return
-  work in its fields. Opening always brings it to the front (`NSApp.activate`).
-- **Closing the window never quits the app.** The app goes back to `.accessory` (menu bar
-  only) and the gateway is unaffected. Quit is in the popover and in the app menu.
-
-Mechanics: every way of opening goes through `AppModel.requestWindow()`, which bumps a
-counter; the menu bar label view (always alive) observes it and calls
-`openWindow(id: "main")` and `WindowCoordinator.focus()`. `WindowCoordinator` receives the
-hosting `NSWindow` from a probe view, and switches the policy back on
-`NSWindow.willCloseNotification`. The `Window` scene has `.defaultLaunchBehavior(.suppressed)`
-and `.restorationBehavior(.disabled)`, so macOS never opens it just because the app launched.
-
-## The gateway as a LaunchAgent
-
-The LaunchAgent plist is embedded at `TelegramGateway.app/Contents/Library/LaunchAgents/
-com.brennancheung.telegram-gateway.daemon.plist`. Its `BundleProgram` is
-`Contents/Resources/gateway-launcher`, a shell script that:
-
-1. reads `daemon_path` from `config.json` (or `TGW_DAEMON_PATH`, or falls back to the bundle),
-2. creates `~/Library/Logs/TelegramGateway/`,
-3. `exec`s the daemon with stdout and stderr appended to `~/Library/Logs/TelegramGateway/daemon.log`.
-
-launchd does not expand `~` in a plist, which is why the redirect happens in the script. The
-script lives in `Contents/Resources` rather than `Contents/MacOS` because `codesign` refuses
-an unsigned script in `MacOS` and the ad-hoc signature cannot sign a script as a code object.
-
-`RunAtLoad` and `KeepAlive` are true: launchd starts the daemon as soon as the agent is
-registered and again at every login, and restarts it if it exits (throttled to once every
-10s; if the binary is missing the launcher sleeps 30s before exiting so the log stays quiet).
-`ProcessType` is `Background`. `AssociatedBundleIdentifiers` names the app so Login Items
-shows "Telegram Gateway" rather than the script.
-
-### How the gateway gets started
-
-The owner is never asked how to run the gateway. **Continue** on step 1, **Start gateway**
-on Overview when it is down, and **Try again** all call `AppModel.startGateway()`:
-
-1. If the gateway already answers, restart it so it rereads the key
-   (`launchctl kickstart -k gui/<uid>/com.brennancheung.telegram-gateway.daemon`, or stop and
-   start the child process).
-2. Otherwise register the LaunchAgent (`SMAppService.agent(plistName:).register()`) and wait
-   up to 8s for `GET /v1/health` to answer.
-3. If it does not — macOS wants approval first, registration failed, or the gateway stayed
-   silent — run it as a **child process of the app** instead (after unregistering a
-   registered-but-silent agent, so only one gateway ever runs) and wait up to 8s again.
-4. If that fails too, the screen says **The gateway didn't start** in red with the reason in
-   one line (the last line of the gateway's log when it exited, otherwise "It didn't answer
-   on port 41414.") and **Show log**; the prominent button becomes **Try again**.
-
-A gateway run as a child process stops when the app quits, so it does not satisfy goal #1 in
-[goal.md](goal.md) ("closing the menu bar app does not stop it"). It exists so setup is never
-blocked on the Login Items approval; the Gateway section shows which way it is running
-("Starts at login: Yes / No / Waiting for your approval / No, runs inside this app") and has
-the switch to change it. The popover's Quit row says "The gateway stops too" in that case.
-
-| Owner's action | App | launchd |
-|---|---|---|
-| **Continue** / **Start gateway** / **Try again** | `startGateway()` as above | loads the agent; runs the launcher now and at login |
-| Gateway → Start at login → **Turn on** | writes `daemon_path`, `register()` | same |
-| Gateway → Start at login → **Turn off** | `unregister()` | stops the gateway, forgets the agent |
-| Gateway → Run inside this app → **Run** / **Stop** | spawns / terminates the child | untouched |
-| **Restart gateway** (popover, or Gateway → Restart) | `launchctl kickstart -k …`, or restarts the child | restarts the daemon |
-| **Quit** | quits (stops a child-process gateway) | untouched: a registered gateway keeps running |
-
-### The Login Items approval step
-
-The first time an app registers a LaunchAgent, macOS may require the owner to allow it.
-What the owner sees:
-
-1. After **Continue**, a system notification: *"Telegram Gateway" added items that can run
-   in the background*. Setup does not wait for it: the gateway runs inside the app meanwhile.
-2. The **Gateway** section shows "Starts at login: Waiting for your approval" and a row
-   **Allow at login → Open settings**, which opens System Settings → General → Login Items &
-   Extensions.
-3. Under **Allow in the Background**, the switch next to **Telegram Gateway** must be on.
-   (Ad-hoc-signed development builds may show the app's name as the developer.)
-4. Back in Gateway, **Start at login → Turn on** registers it again; "Starts at login" reads
-   "Yes". If a child-process gateway is still running, stop it first (**Run inside this app
-   → Stop**): two gateways cannot share one data directory, and the second one refuses to
-   start.
-
-Approval persists until the app's bundle path or signature changes.
-
-## The popover
-
-Top to bottom, and nothing else:
-
-- **The state line**, in a card: "Monitoring 3 chats" with one secondary line "37 messages
-  in the last hour · 4,812 total". When something is wrong the card is amber or red and says
-  what: "Not set up yet", "Not signed in", "Reconnecting…", "Not monitoring any chats",
-  "Gateway not running", "Can't control the gateway".
-- **Needs you**, an amber card, only when non-empty: one row per pending access request
-  ("Community Analytics wants access", "13 min left"), per stopped or failing delivery
-  ("Archive: delivery paused", "Connection refused"), and for whatever keeps the gateway
-  from working ("Set up Telegram Gateway", "Sign in to Telegram", "Start the gateway",
-  "Restart the gateway", "Choose chats to monitor"). Clicking a row opens the main window at
-  the place where it is dealt with: the request's review sheet, the app's detail, the
-  sign-in flow, Overview, Chats.
-- **Actions**: **Open Telegram Gateway…** (the prominent one), **Restart gateway**, and
-  **Quit** with the line "The gateway keeps running".
-
-## The main window
-
-`AppModel.screen` decides what the window shows from facts, in this order:
-
-| Facts | The window shows |
-|---|---|
-| `config.json` lacks a valid `api_id`/`api_hash`, or the owner chose Edit… in Gateway | **Connect** (step 1), no sidebar |
-| `/v1/health` does not answer, first-run setup not finished | **Connect** (step 1, fields filled in), no sidebar |
-| Gateway answers, `tdlib.auth_state` is not `ready` | **Sign in** (step 2), no sidebar |
-| `/v1/health` does not answer, set up before | sidebar; Overview says "Gateway not running" |
-| Gateway answers, no admin token can be read | sidebar; Overview says "Can't control the gateway" |
-| Signed in | sidebar: Overview, Chats, Apps, Gateway |
-
-"First-run setup finished" is remembered in the app's defaults (`onboardingDone`): it becomes
-true when the owner first saves a monitored set, dismisses the step 3 banner, or the gateway
-already monitors chats or serves apps. Until then the flow carries a quiet "Step N of 3".
-
-The sidebar's foot shows one dot and one phrase ("Connected as @brennan", "Reconnecting to
-Telegram…", "Gateway not running", "Gateway needs attention"). The Apps row carries a badge
-with the number of pending requests.
-
-### Setup and sign-in (no sidebar)
-
-One centred column; the window title is "Telegram Gateway".
-
-**Step 1 — Connect to Telegram.** One sentence, a link "Get your key at my.telegram.org ↗"
-with the hint "API development tools → create an app (any name, platform Desktop)", the
-fields **API ID** and **API hash**, and one prominent **Continue**. Continue merges the key
-into `config.json` (keeping `port` and every other key) and starts the gateway as described
-above. A field shows a red line only when its content cannot be valid. If starting fails: a
-red card "The gateway didn't start", the reason in one line, **Show log**, and the button
-becomes **Try again**. No paths, no launchd state, no manual controls.
-
-**Step 2 — Scan to sign in.** The QR code on the left, and on the right the title and three
-numbered lines (Open Telegram on your phone / Settings → Devices → Link Desktop Device /
-Point it at this code) with the link **Use phone number instead**. The app polls
-`GET /v1/admin/auth` every 2s, asks for a code once (`POST /v1/admin/auth/qr`) and redraws
-the image only when the token in the link changes; renewal is silent. Only a failure replaces
-the code with "Couldn't get a code", the reason, and **Refresh**. Phone, code, password and
-e-mail steps are one centred form each: title, one sentence, the field, a hint under it
-("Sent to the Telegram app on +1 ••• 42", "Hint: pet") or the error in red, the prominent
-button, and a Back / Start over link; Return submits. A QR scan on an account with two-step
-verification lands on the same password form. `wait_registration` explains that the gateway
-only signs in to existing accounts. A quiet link at the bottom, **Change the Telegram
-key…**, goes back to step 1 (the way out when Telegram rejects the key).
-
-**Step 3 — Choose chats.** After the first sign-in the sidebar appears with Chats selected
-and a one-time card above the table: "Pick the chats to monitor. Nothing else leaves the
-gateway."
-
-### Overview
-
-- *Hero*, across the top: the state line and one secondary line; when something is wrong
-  the card is tinted and carries the one action — "Not monitoring any chats" → **Choose
-  chats**; "Gateway not running" → **Start gateway**; "The gateway didn't start" with the
-  reason and **Show log** → **Try again**; "Can't control the gateway" → **Restart gateway**
-  (and Check again); "Reconnecting…" has no action, it recovers by itself.
-- *Needs you*: present only when non-empty, amber. One row per pending request (→
-  **Review…**, which opens the review sheet) and per stopped or failing delivery (→
-  **Resume**).
-- *Apps*: one row per app with access — name and a trailing state: a green dot with "1m ago"
-  (last delivery or last connection), or amber "Paused" / "Failing". A row opens that app in
-  the Apps section.
-- Needs you and Apps sit side by side when the window is wide (detail area ≥ 700pt), stacked
-  otherwise.
-- A quiet footer line: "Gateway 0.1.0 · up 6h".
-
-### Chats
-
-A `Table` with the columns **Monitored** (checkbox), **Chat** (type icon and title),
-**Type** (Folder, Channel, Group, Person), **Members** and **Username**; every column sorts.
-The toolbar has a scope control — **Monitored / Folders / All** — and the search field.
-Unsorted, monitored rows come first (their place follows what is saved, so rows do not jump
-while ticking). A chat covered by a ticked folder is ticked, locked, and says "via Product
-folder" under its title. Ticks are a draft: the bottom bar reads "3 monitored" until
-something changes, then "2 unsaved changes" with **Revert** and the prominent **Save**
-(Cmd-S; `PUT /v1/admin/monitored-chats` replaces the whole set). The bar also carries the one
-folder fact: "A folder follows what you put in it on your phone."
-
-### Apps
-
-A list on the left and the selected item's detail on the right.
-
-- The list: **Wants access** first (each pending request with an amber dot and the time
-  left), then **Has access** (name, trailing state, and one line such as "2 chats · new
-  messages, chat names" — a count once there are more than two permissions). The oldest
-  request is selected by default.
-- A selected request: an amber card with the name, "Wants access · 13 min left", the app's
-  description, and three labelled facts — **Wants** (the permissions as one sentence),
-  **In** (the chats, one per line, with an amber "not monitored yet" on the ones that are
-  not), **Sends to** (the webhook's host) — then **Deny** and the prominent **Review…**.
-- A selected app: description, **Can read** (each permission with what it means), the chats
-  (or "Chats in the Product folder"; a chat that is no longer monitored says so in amber),
-  and delivery. A paused delivery is an amber card at the top with the reason, how many
-  messages wait, and the prominent **Resume**. The bottom bar has "Access since Sep 19" and
-  **Revoke access…** (red, behind a confirmation that says it cannot be undone).
-- **The review sheet** ("Give *App* access"), a sheet on the window: a **Chats** card with a
-  checkbox row per chat the app asked for, pre-ticked; one that is not monitored says in
-  amber "Not monitored yet — approving starts monitoring it" (the app then runs
-  `PUT /v1/admin/monitored-chats` before `POST …/approve`, so the owner makes one decision —
-  grants.md). "Show N other monitored chats" adds the rest of the monitored set; "Follow a
-  folder instead" switches the card to a choice among monitored folders (and back). A
-  request for "any" chats lists every monitored chat. A **Can read** card has a checkbox per
-  requested permission with its meaning. Bottom bar: "3 chats · 3 permissions", **Cancel**
-  (Esc), and the prominent **Approve** (Return).
-- Refreshes every 5s while the section is open; the pending count is also polled in the
-  background (every 15s while neither surface is open) for the menu bar badge.
-
-### Gateway
-
-The only place with plumbing. **Gateway**: Status, Address (`127.0.0.1:41414`), Version,
-Started, Uptime, Starts at login. **Controls**: Restart; Allow at login (when macOS is
-waiting); Start at login Turn on / Turn off; Run inside this app Run / Stop; Log → Show log.
-**Telegram**: the account with **Sign out…** (confirmed), API ID, masked API hash with
-**Edit…** (reopens step 1). **Files**: Program, Settings, Log paths. Two columns when the
-window is wide enough.
-
-Chats and Apps show "Gateway not running — Overview has the way to fix it" while the gateway
-cannot serve them; Overview and Gateway keep working.
-
-## Checking the UI without clicking
-
-`App/snapshot.sh <directory>` renders every state of both surfaces with the fake gateway
-into PNG files, light and dark: `p01…p08` are the popover, `w01…w30` the main window (the
-review sheet is `w27`, `w28`).
+Requirements: Xcode 26. For anything past step 1 you also need the gateway binary:
+`swift build` in the repository root ([development.md](development.md)).
 
 ```
-App/run.sh --no-launch               # or any Debug build
-App/snapshot.sh /tmp/shots           # all states
-App/snapshot.sh /tmp/shots --only w2 # a subset by file-name prefix
-App/snapshot.sh /tmp/shots --key     # as key windows: takes keyboard focus while it runs
-APP_BIN=/path/to/TelegramGateway App/snapshot.sh /tmp/shots   # another build
+# Build (Debug):
+xcodebuild -project App/TelegramGateway.xcodeproj -scheme TelegramGateway -configuration Debug build
+
+# Build into App/.derived and launch, replacing a running copy:
+App/run.sh
+
+# Unit tests (about 1s; no gateway, no Telegram account, no windows):
+App/run.sh --test
 ```
 
-How it works: the app, started with `--snapshot <directory> --shoot`, steps through its
-states. Popover and sheet states it renders itself. For each main-window state it shows a
-real window, writes `<directory>/.shoot` ("<window number> <file name>") and waits; the
-script photographs that window with `screencapture -l` and removes the file. The window is
-photographed from outside because an in-process render cannot see the sidebar, which macOS
-draws in a separate layer; this needs Screen Recording permission for the terminal.
+`App/TelegramGateway.xcodeproj` is checked in and builds from a clean checkout.
+`App/project.yml` describes the same project for [XcodeGen](https://github.com/yonaskolb/XcodeGen);
+if you change the project's structure, keep the two in step.
 
-Without `--key` the windows are not key, and AppKit draws native controls in an inactive
-window grey (prominent buttons, checkboxes, selection, the window's traffic lights). That is
-fine for layout work. For a final check use `--key`, which shows them as the owner sees them.
-It launches the app through LaunchServices (`open -n -W`), because macOS lets a launched app
-come to the front but ignores the same request from a binary started in a shell, and it takes
-keyboard focus for the duration (about 01:40 for the full set). A capture taken while
-something else had the focus (someone clicked another window mid-run) still comes out grey;
-re-render that state with `--only <name>`. The script exits with an error if the app was quit
-before the last state.
+### The API client and the fake gateway
 
-A snapshot run never reads the Keychain, never registers anything with launchd, never writes
-`config.json` and never persists to the app's defaults. When the app from `App/.derived` is
-running, build into a separate `-derivedDataPath` and pass `APP_BIN`, so its files are not
-replaced under it.
+Every call the menu bar app makes to the gateway goes through the `APIClient` protocol
+(`API/APIClient.swift`), whose methods mirror the administrative endpoints in
+[api.md](api.md).
 
-`--snapshot <directory> --live` instead drives the real HTTP client against whatever answers
-on the configured port through a scripted flow (QR → phone → wrong code → code → wrong
-password → password → overview → chats → save → apps → review → approve → revoke → gateway →
-sign out), printing each step:
+- `HTTPAPIClient` is the real one: JSON over HTTP to `127.0.0.1` on the configured port, with
+  the admin token read on every request.
+- `FakeAPIClient` is an in-memory gateway with the same behaviour where it matters: the
+  sign-in state machine (QR, phone, code, password), chats and folders, the monitored set,
+  requests turning into grants, revocation, a paused delivery. It starts in a named
+  `Scenario` (`.loggedOut`, `.waitingForQR`, `.loggedIn`, `.reconnecting`, `.unreachable`, …).
+
+`AppModel.preview(_:)` builds a model over the fake. Previews, unit tests and snapshots all
+use it, so none of them needs a gateway, reads `secrets.json`, registers anything with
+launchd, or writes `config.json`. The unit tests cover decoding of the examples in api.md,
+the QR link handling, the wording table, and every flow in `AppModel`.
+
+`AppModel` decides; views render. Which screen is shown (`screen`), the state line (`hero`),
+what needs attention (`needsYou`), the monitored-set draft and the approval draft are all
+computed or held there, which is what makes them testable without a view.
+
+Words shown on screen come from one place, `Services/Wording.swift`: permission names,
+relative times, the chat subtitle, and the translation of Telegram's error codes. Identifiers
+from the API appear on screen only as tooltips.
+
+### The visual system
+
+`Views/Design.swift` defines the pieces every screen is built from:
+
+- a type scale (screen title 15 semibold, row title 13 medium, body 13, secondary 11, section
+  label 11 semibold, and the 20 semibold state line);
+- inset rounded cards, with dividers only between rows inside a card;
+- at most one prominent button per screen;
+- colour for state only: green fine, amber waiting or needs attention, red failed.
+
+The window uses native controls. The popover draws its one prominent button itself
+(`PrimaryButtonStyle`), because a menu bar popover is not always the key window and AppKit
+greys prominent buttons in an inactive one.
+
+### Checking screens with snapshots
+
+Nobody can click through a menu bar app in an automated check, so Debug builds can render
+every state of both surfaces to PNG files, light and dark:
 
 ```
-TGW_HOME=/tmp/tgw-scratch TGW_PORT=41498 …/TelegramGateway --snapshot /tmp/shots --live
+App/run.sh --no-launch                # or any Debug build
+App/snapshot.sh /tmp/shots            # every state
+App/snapshot.sh /tmp/shots --only w2  # a subset, by file-name prefix
 ```
 
-`TGW_HOME` and `TGW_PORT` are honoured like the daemon honours them, so a scratch data
-directory with its own `config.json` (and a second gateway started with `--home` and
-`--port`) keeps a test away from the real one.
+Files named `p…` are popover states, `w…` window states (the review sheet included). The app
+steps through the states with the fake gateway. It renders popover and sheet states itself;
+for window states it shows a real window and the script photographs it with
+`screencapture -l`, because an in-process render cannot see the sidebar. The terminal needs
+Screen Recording permission for that.
 
-When reviewing snapshots, check each screen for: the primary question answerable in two
-seconds; one kind of information per visual region; routine states quiet and exceptions
-visible; at most one prominent button; no copy that merely narrates; no dead space next to
-crowding.
+Windows that are not frontmost are drawn by macOS with grey controls. That is fine for
+checking layout. `--key` brings each window to the front so controls show their real colours;
+it takes keyboard focus for the whole run (about 01:40), so use it only when nobody is
+working at the machine.
 
-## Troubleshooting
+When you review snapshots, ask of each screen: can the main question be answered in two
+seconds; does each region hold one kind of information; are routine states quiet and
+exceptions visible; is there at most one prominent button; does any text merely narrate.
 
-**"Gateway not running" / "The gateway didn't start".** The app polls
-`GET http://127.0.0.1:<port>/v1/health` and got no connection.
-- The red card's one line is the reason; **Show log** opens
-  `~/Library/Logs/TelegramGateway/daemon.log` (or `daemon-foreground.log` when the gateway
-  was run inside the app).
-- "The gateway program is missing": `.build/debug/GatewayDaemon` does not exist (run
-  `swift build`) or `daemon_path` in `config.json` points somewhere stale. Gateway → Files →
-  Program shows the path in use.
-- "It didn't answer on port 41414": `port` in
-  `~/Library/Application Support/TelegramGateway/config.json` (default 41414) must be what
-  the gateway listens on; `TGW_PORT` in the app's environment overrides it for the app only.
-  Another program on the port shows up in the log as "Address already in use".
-- `launchctl print gui/$(id -u)/com.brennancheung.telegram-gateway.daemon` shows launchd's
-  view: `state = not running` with a non-zero `last exit code` means the gateway crashes on
-  start.
-- Gateway says "Starts at login: Needs setting up again": the app bundle moved (for example
-  `App/.derived` was deleted and rebuilt elsewhere). Start at login → Turn on.
+`TelegramGateway --snapshot <directory> --live` instead drives the real `HTTPAPIClient`
+through a scripted sign-in, chats and apps flow against whatever answers on the configured
+port. Set `TGW_HOME` to a scratch directory and `TGW_PORT` to a second gateway's port so it
+stays away from your real data.
 
-**"Can't control the gateway".** The gateway is up but
-`~/Library/Application Support/TelegramGateway/secrets.json` has no `admin-token` entry (or
-does not exist).
-- The gateway writes it on its first start; if it just started, **Check again**.
-- The app and the gateway must use the same data directory: a gateway started with a custom
-  `TGW_HOME` writes its `secrets.json` there, and the app reads `TGW_HOME` from its own
-  environment (unset for an app launched from Finder or `open`).
-- The secondary line names the problem when the file exists but is unreadable (not a JSON
-  object, token not a string); fix or delete the file and **Restart gateway** to regenerate.
-- "The gateway no longer accepts the app's access key" means the gateway regenerated it (for
-  example `tgw` asked for a new one) after the app read it; the next refresh re-reads the file.
+### Window behaviour
 
-**Keychain password prompts.** Only possible with `"secrets": "keychain"` in `config.json`,
-which no development setup should have: the ad-hoc-signed app is a new "application" to the
-Keychain after every rebuild, so each read prompts. Remove the key (or set `"file"`) and
-restart the gateway so it writes `secrets.json`.
+The app is an `LSUIElement` application: on launch it has no Dock icon, only the menu bar
+icon.
 
-**The QR code does not scan, or the phone says it expired.** The link rotates roughly every
-30s and the app redraws it within 2s of the gateway reporting a new one; keep the window open
-while scanning (closing it stops the 2s poll). "Couldn't get a code" with **Refresh** appears
-only when the gateway could not obtain one — the reason is under it ("Telegram doesn't
-recognise the API ID and hash" means the key from step 1 is wrong: **Change the Telegram
-key…** at the bottom of the sign-in screen). If nothing happens after a successful scan, the
-account probably has two-step verification: the screen switches to the password form by
-itself.
+- There is exactly one main window (a SwiftUI `Window` scene, 820×560 by default, 700×460 at
+  least). Every way of opening it goes through `AppModel.requestWindow()`; the menu bar label
+  view observes the request and calls `openWindow` and `WindowCoordinator.focus()`. Asking
+  again re-focuses the window; there is no New Window command, and Cmd-, re-focuses it too.
+- The window opens by itself when setup or sign-in becomes necessary, once per occurrence.
+  Launching the app when everything is fine opens nothing (`.defaultLaunchBehavior(.suppressed)`).
+- While the window is open the app is a regular app (`.regular` activation policy): Dock
+  icon, Cmd-Tab, and Edit and Window menus, so paste, Cmd-W and Return work. When the window
+  closes it goes back to `.accessory`. Closing the window never quits the app.
 
-**The window does not appear, or the Dock icon stays after closing it.** The window is
-opened only through `AppModel.requestWindow()`; check that the menu bar icon is present (the
-label view carries out the request). The Dock icon follows the window: it appears when the
-window opens and goes when the window closes. If it lingers, another window of the app is
-still open (a confirmation dialog or the review sheet counts until dismissed).
+### Configuration and secrets
 
-**Login Items denied, or "Starts at login: Waiting for your approval".** System Settings →
-General → Login Items & Extensions → *Allow in the Background* → switch **Telegram Gateway**
-on, then Gateway → Start at login → Turn on. A rebuild with a different bundle path needs
-approval again. `sfltool resetbtm` (Apple's reset for the background task manager) clears a
-wedged list; it requires a logout.
+The menu bar app and the gateway share `~/Library/Application Support/TelegramGateway/`
+(`TGW_HOME` overrides the directory, `TGW_PORT` the port).
 
-**Two gateways.** Never run `tgw`, or Run inside this app, while a registered gateway is
-running on the same data directory: TDLib locks `td.binlog` and the second process refuses to
-start (design.md "Why one TDLib owner"). Turn Start at login off first.
+- `config.json` holds `api_id`, `api_hash`, `port` and `daemon_path`. The menu bar app merges
+  its keys into the file and leaves every other key untouched.
+- `secrets.json` holds the admin token. Setting `"secrets": "keychain"` in `config.json`
+  makes both programs use the login Keychain instead. That is meant for a build signed with a
+  stable identity: an ad-hoc-signed development build is a new program to the Keychain after
+  every rebuild, and each read would ask for your password.
 
-**Quitting the app does not stop the gateway.** That is by design (goal.md #1) when it starts
-at login. To stop it: Gateway → Start at login → Turn off, or `launchctl bootout
-gui/$(id -u)/com.brennancheung.telegram-gateway.daemon`. A gateway that runs inside the app
-does stop with it.
+### Not yet bundled
 
-## What the app relies on beyond the first api.md
-
-These were gaps when the app was written; the daemon and api.md now cover them, and the app
-tolerates their absence where noted.
-
-- Every login POST (`qr`, `phone`, `code`, `password`, `email`, `email_code`, `logout`)
-  returns the `GET /v1/admin/auth` object. If a body does not decode as one, the app re-reads
-  `GET /v1/admin/auth`.
-- `GET /v1/admin/auth` carries `phone_hint` and `code_type` (`sms`, `call`,
-  `telegram_message`, …) in `wait_code` and `password_hint` in `wait_password`; a wrong
-  password is `400` with `error.details.reason = "wrong_password"` and
-  `error.details.password_hint`.
-- States `wait_email_address`, `wait_email_code` (endpoints `POST /v1/admin/auth/email
-  { "email_address" }`, `POST /v1/admin/auth/email_code { "code" }`) and `wait_registration`
-  (number with no account).
-- `/v1/admin/status.events_today` exists; the state line uses `events_last_hour` and `head_seq`.
-- `daemon_path` in `config.json` is tolerated by the daemon and listed in api.md.
-- `secrets.json` holds `admin-token` base64-encoded (the app also accepts a raw `tgw_…`).
-- There is no pause/resume-monitoring call, so neither surface has such an action.
-- `requested_chats` in `GET /v1/admin/access-requests` is a list or the string `"any"`; the
-  app decodes both.
-- A webhook's failure count is not in the API, so a paused delivery is described by its last
-  error ("connection refused") rather than "after N failures".
+The gateway binary and its Telegram library are not inside the app bundle yet. A development
+build finds `<repository>/.build/debug/GatewayDaemon` through `TGWRepositoryRoot` in its
+Info.plist (set from the project's location at build time) or by walking up from the app's
+own location to the repository. A distributable build needs a build phase that copies the
+release binary and its library into `Contents/MacOS/` — the launcher script already looks
+there — and a stable signing identity. [status.md](status.md) tracks what is done.

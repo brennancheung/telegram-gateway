@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import TelegramGateway
 
-/// The one mapping from API identifiers to the owner's words.
+/// The one mapping from API identifiers to the words shown on screen.
 @Suite("Wording")
 struct WordingTests {
     @Test("Permissions in plain words")
@@ -95,7 +95,7 @@ struct WordingTests {
         #expect(Wording.codeDestination(type: nil, phone: nil) == nil)
     }
 
-    @Test("Telegram's error codes in the owner's words")
+    @Test("Telegram's error codes in plain words")
     @MainActor
     func loginMessages() {
         func message(_ text: String, reason: String? = nil) -> String {

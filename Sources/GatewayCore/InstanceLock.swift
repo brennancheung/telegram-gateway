@@ -65,7 +65,7 @@ public final class InstanceLock: Sendable {
                 the gateway daemon (pid \(pid)) is running and owns TDLib. Direct TDLib commands \
                 cannot run at the same time; use the daemon-backed equivalents (`tgw health`, \
                 `tgw monitor`, `tgw requests`, `tgw grants`, `tgw events tail`) or stop the daemon \
-                first (`tgw daemon uninstall`, or `launchctl bootout gui/$(id -u)/com.brennancheung.telegram-gateway`).
+                first (`tgw daemon uninstall`, or `launchctl bootout gui/$(id -u)/local.telegram-gateway`).
                 """
         default:
             return "another tgw command (pid \(pid), \(role)) has TDLib open; wait for it to finish or stop it."

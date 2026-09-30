@@ -1,121 +1,81 @@
-# Status
+# Status and roadmap
 
-Updated: 2026-09-30
+Telegram Gateway is pre-release software. It builds from source, its test suite passes, and
+the gateway, the menu bar app and `tgw` run together on a Mac. The part that talks to
+Telegram has been written against TDLib's schema and tested with a scripted stand-in; it has
+not yet been verified against a live Telegram account. Read the second section before you
+rely on it.
 
-## Built
+## What works today
 
-**Foundation** (build order step 1 in `docs/design.md`).
+- **Building from source**: TDLib at a pinned commit, the Swift package (`GatewayDaemon`,
+  `tgw`), and the menu bar app. See [development.md](development.md) and [app.md](app.md).
+- **The gateway service**: runs in the foreground or as a LaunchAgent, keeps its data in one
+  directory, refuses to run twice on the same data, shuts down cleanly.
+- **The whole API in [api.md](api.md)**: health, the access-request flow, grants and scopes,
+  the monitored set and folders, paged events, the WebSocket stream with resume, history,
+  media with range requests, webhooks with signatures and retries, the login endpoints,
+  pruning, rate limits.
+- **The event log**: numbered events, resume from any sequence number, retention and pruning.
+- **Webhook delivery**: ordered batches, HMAC signatures, the retry schedule, pause and
+  resume, recovery of an interrupted delivery after a restart.
+- **Administration** from the menu bar app and from `tgw`: install and inspect the
+  LaunchAgent, change the monitored set, approve, deny and revoke, follow the event stream.
+- **Tests**: the suite runs without a Telegram account and without network access, and
+  covers everything above, including the translation of each TDLib update into the event
+  format in [events.md](events.md).
 
-- `vendor/tdlib/build.sh` — builds `libtdjson.dylib` (TDLib 1.8.67, arm64, Release, OpenSSL
-  linked statically, no Homebrew runtime dependency, macOS 15 deployment target) from the
-  pinned commit. Idempotent. 01:43 for a clean build on an M5 Max.
-- `CTDLib` — C module over `td_json_client.h`.
-- `TDLibClient` — `actor TDLibClient`: one process-wide receive thread routing by
-  `@client_id`; request/response correlation by `@extra`; `TDLibError`; `updates` stream;
-  `AuthState` enum. Strict Swift 6 concurrency.
-- `QRCode` — byte-mode QR encoder and terminal renderer.
-- `tgw` direct commands — `login` (QR or `--phone`), `whoami`, `chats`, `watch`, `logout`.
+## Not yet verified against a live Telegram account
 
-**Daemon** (build order step 2). Everything below builds with `swift build`, passes
-`swift test` (108 tests in 21 suites, 0.5s of test time, no account and no network needed) and the
-daemon has been run against its own API with `curl` and `tgw` on a machine without
-`api_id`/`api_hash`. Nothing has talked to Telegram yet.
+The code on the TDLib side follows TDLib's published schema, and the tests feed it objects
+built from that schema. None of the following has been observed with a real account yet, so
+expect to find differences:
 
-- `GatewayCore` — the domain as a library: `Store` (GRDB, WAL, one migration, eleven tables),
-  `EventLog` (append, exclusive `since`, `410` semantics, prune, per-process broadcast),
-  `Grants` (tokens stored as SHA-256, `granted ∩ monitored` at read time, folder grants,
-  scope gating, revocation broadcast, webhook settings), `AccessRequests` (device-code flow,
-  `15:00` pending, `10:00` hand-out, purge), `Translator` (TDLib JSON → docs/events.md objects:
-  every message content kind, entity subset with UTF-16 offsets, senders, forward origins,
-  stable `med_` ids, edit dedupe, permanent deletes only, chat changes, folders, connection
-  state), `Monitor` (monitored-set diffing with `monitoring.*` events, cursors, member-count
-  coalescing, folder membership, backfill after a gap that survives live updates racing it),
-  `WebhookDispatcher` (one loop per grant, ≤100 / 500 ms / 4 MiB batches, HMAC-SHA256, the
-  retry ladder, pause after `24:00:00` or on `410`, resume, persisted cursors and deliveries,
-  in-flight re-send after restart), `MediaCache` (download through TDLib, poll for completion,
-  LRU eviction, index in the store), `RateLimiter`, `TelegramSession` (the daemon's TDLib
-  owner: parameters, `online=false`, login steps, re-creates the client after `logOut`),
-  `InstanceLock`, `SecretStore` (file by default, Keychain opt-in, memory for tests), `Config`,
-  `Paths`, `JSONValue`, `GatewayClient`.
-- `GatewayServer` — every route in docs/api.md's endpoint index on Hummingbird 2: the error
-  JSON shape, `X-TGW-Request-Id`, per-token rate limits with `X-RateLimit-*` and `429`,
-  access-request throttles, admin login endpoints, media with `Range` and `202` while
-  downloading, the WebSocket stream with backlog, `caught_up`, heartbeat, all close codes, and
-  `1001` on shutdown.
-- `GatewayDaemon` — the executable: `TGW_HOME`/`config.json`/`TGW_PORT`, admin token in the
-  secret store on first run (`secrets.json`; Keychain only when configured), lock file, stderr logging with `--verbose`, clean shutdown on
-  SIGTERM/SIGINT (WebSockets `1001`, server drained, TDLib closed), hourly housekeeping and
-  `events_retention_days`. Runs without credentials in a store-only mode.
-- `tgw` daemon-backed commands — `daemon install|uninstall|status|logs` (LaunchAgent from
-  `launchd/…plist`), `health`, `monitor list|add|remove|folders`, `requests
-  list|approve|deny`, `grants list|show|revoke|resume-webhook`, `events tail|page`, `secrets
-  show|regenerate-admin-token`. The direct
-  commands refuse to run while the daemon holds the lock.
-- `GatewayTestSupport` — `FakeTDLib` (scripted from fixtures), `Fixtures` (TDLib objects with
-  the field names in `td_api.tl`), `FakeWebhookClient`, `FakeTelegram`, `ManualClock`.
-- Docs: `development.md` (daemon, launchd, data layout, every `tgw` command with output),
-  `api.md` and `events.md` corrected where the implementation had to deviate (listed in
-  the "Deviations" section of each).
+- Logging in through the gateway: the QR flow, phone number with code and two-step password,
+  accounts that log in with an e-mail code, and logging out and in again without a restart.
+- Whether Telegram pushes new messages promptly for large channels the account has joined
+  but not opened recently, and whether the chat list must be loaded first.
+- Edited messages: the order in which TDLib reports an edit's two updates, and that exactly
+  one `message.edited` results.
+- Backfill after sleep or a lost connection: reading history forward from the last message
+  seen, in busy chats.
+- Chat folders: reading a folder's chats, and following changes made on the phone.
+- Member counts and how often Telegram reports them.
+- Media: downloading on demand, progress while downloading, and eviction from the cache.
+- Long-running behaviour: days of uptime, reconnects, Telegram's rate limits on history.
 
-**Integration (2026-09-30).** The daemon, the menu bar app and `tgw` were run together on the
-owner's machine: the daemon on the real `TGW_HOME`, the app's `--snapshot --live` flow against
-it. The app reaches the daemon, reads the admin token from `secrets.json` without a Keychain
-prompt, and shows Setup. The daemon is installed as a LaunchAgent with `tgw daemon install`.
-Not yet done: the first live login (needs `api_id`/`api_hash`), and the app's own
-`SMAppService` registration reported "Registered, but launchd cannot find the agent" against
-the development bundle; the `tgw daemon install` path is used instead until the daemon is
-bundled into the app.
+`tgw watch` exists to check the second item directly: it prints each message as TDLib
+reports it, next to the message's own timestamp.
 
-## In progress
+## Known limitations
 
-- First live login: add `api_id`/`api_hash` to `config.json`, `tgw daemon install`, then
-  `tgw login` is not the path any more — log in through the daemon (`POST /v1/admin/auth/qr`
-  and poll `GET /v1/admin/auth`, or the menu bar app once it exists). Until then everything
-  TDLib-facing is exercised only through `FakeTDLib`.
+- macOS on Apple silicon only, macOS 15 or later.
+- One Telegram account per gateway.
+- Read-only. The gateway cannot send messages.
+- No packaged release. You build from source, which needs Xcode, cmake and a few minutes.
+- You need your own `api_id` and `api_hash` from https://my.telegram.org.
+- Apps on other machines can receive webhooks but cannot open the WebSocket or call the
+  HTTP API: the gateway listens on `127.0.0.1` only.
+- The event log stores message content unencrypted in the data directory, and keeps it
+  forever unless you set a retention period or prune.
+- Webhook signing secrets are stored unencrypted in the gateway's database, since the
+  gateway signs with them. An approved app's token is stored unencrypted for the `10:00` in
+  which the app may collect it.
+- Reactions, poll contents, read state, forum topics and secret chats are not part of the
+  event format.
+- On the WebSocket, a bad token is reported with a close code after the upgrade, not with an
+  HTTP `401`.
+- A locally built menu bar app may fail to register the gateway to start at login; macOS
+  reports it registered but does not start it. Installing the LaunchAgent with
+  `tgw daemon install` works, as does letting the app run the gateway while it is open.
+- There are two ways to run the gateway at login (the app's and `tgw daemon install`). Use
+  one; a second gateway on the same data directory refuses to start.
 
-## Next
+## Planned
 
-- Verify against the real account (see "Needs a live account" below), then fix what TDLib
-  does differently from the fixtures.
-- Menu bar app (build order step 3): SMAppService registration, login UI over
-  `/v1/admin/auth/*`, chat picker over `/v1/admin/chats?all=true`, approvals over
-  `/v1/admin/access-requests`, activity over `/v1/admin/grants/{id}/deliveries`.
-- First consumer (separate repository).
-
-## Needs a live account to verify
-
-Everything on the TDLib edge was written from the schema, not observed:
-
-- Whether `updateNewMessage` arrives promptly for large channels the account has joined but
-  never opened, and whether `loadChats` on the main list is needed before updates flow
-  (`tgw watch` measures this; the daemon calls `loadChats` only when listing chats).
-- The order of `updateMessageContent` and `updateMessageEdited` and whether `getMessage`
-  already reflects the new `edit_date` when the first of them arrives (the translator
-  emits once per `edit_date` either way).
-- `getChatHistory` with `offset: -99` from the cursor: page shape and whether TDLib returns
-  fewer than asked in the first call (the monitor loops until no newer message appears).
-- Folder contents through `loadChats` + `getChats(chatListFolder)`; `updateChatAddedToList`
-  / `updateChatRemovedFromList` for folder membership changes made on the phone.
-- `member_count` on `supergroup` vs `supergroupFullInfo`, and how often
-  `updateSupergroupFullInfo` fires (coalesced to one `chat.updated` per chat per `05:00`).
-- `downloadFile(synchronous: false)` + `getFile` polling, the `local.path` TDLib reports, and
-  whether `deleteFile` evicts cleanly.
-- QR login through `requestQrCodeAuthentication` → `authorizationStateWaitOtherDeviceConfirmation`
-  driven over HTTP, and the client re-creation after `logOut`.
-- Update latency after the Mac sleeps and the connection returns (`connectionStateReady`
-  triggers the backfill).
-
-## Open questions
-
-- Secrets from the foundation step (`tdlib-db-key`) and from the daemon's first smoke run
-  (`admin-token`) are still in the login Keychain. Nothing reads or migrates them (reading
-  would prompt); they can be deleted from Keychain Access at leisure. Logging in again
-  populates `secrets.json` from scratch.
-
-- The webhook secret is stored in plain text in `gateway.sqlite` because the gateway must
-  sign with it; the token appears in `access_requests` for its `10:00` hand-out window and is
-  then erased. Both could move under a Keychain-held key if the store's file protection
-  (owner-only, in the home directory) is judged insufficient.
-- `chat.updated` for a private chat's title/username follows `updateUser`; the gateway only
-  re-reads the chat if it is monitored, so private chats cost nothing unless chosen.
-- Whether to cap the WebSocket backlog replay speed; today it is bounded only by the socket.
+- Verification against a live account, and fixes for whatever differs.
+- The gateway bundled inside the menu bar app, so that installing the app is the whole
+  installation and no command-line step is needed.
+- A signed, notarized release, with secrets in the Keychain.
+- Sending messages, behind its own scope (`messages:send`) that the user grants explicitly.
+- Consumers on other machines holding a WebSocket, over a private network.

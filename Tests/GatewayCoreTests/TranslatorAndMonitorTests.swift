@@ -276,7 +276,7 @@ import Testing
         var page = try await core.eventLog.page(since: 0, limit: 10)
         #expect(page.events.map(\.type) == [.monitoringStarted])
         #expect(page.events[0].payload == .monitoring(MonitoringInfo(source: .folder, folderId: 3, folderTitle: "Product")))
-        // The owner drags the community group into the folder on the phone.
+        // The user drags the community group into the folder on the phone.
         await core.monitor.handle(update: Fixtures.updateChatAddedToFolder(chatId: Fixtures.groupId, folderId: 3))
         page = try await core.eventLog.page(since: 1, limit: 10)
         #expect(page.events.map(\.type) == [.monitoringStarted] && page.events[0].chat.id == Fixtures.groupId)

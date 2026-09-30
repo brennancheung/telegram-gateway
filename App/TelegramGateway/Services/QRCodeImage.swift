@@ -3,7 +3,7 @@ import CoreImage.CIFilterBuiltins
 import Foundation
 
 /// Renders a string as a QR code bitmap with CoreImage's `CIQRCodeGenerator`. Used for the
-/// `tg://login?token=…` link the owner scans with the Telegram app on the phone.
+/// `tg://login?token=…` link that is scanned with the Telegram app on the phone.
 enum QRCodeImage {
     /// A crisp (nearest-neighbour scaled) QR image, `scale` pixels per module, or nil when
     /// the string cannot be encoded (empty, or longer than a QR code can hold).

@@ -9,7 +9,7 @@
 # needs Screen Recording permission for the terminal running this script.
 #
 #   --key   make each snapshot window the key window of the frontmost app, so native controls
-#           are drawn in the accent colour as the owner sees them. The app is then launched
+#           are drawn in the accent colour as they look in use. The app is then launched
 #           through LaunchServices (`open`), because macOS only lets a launched app come to
 #           the front, not a binary started from a shell. It takes keyboard focus while it
 #           runs. Without --key, native controls are drawn grey, as in any inactive window.

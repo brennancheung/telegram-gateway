@@ -59,14 +59,14 @@ struct DecodingTests {
         {
           "status": "ok", "version": "0.1.0", "started_at": "2026-09-29T09:00:12.004Z", "time": "2026-09-29T14:03:37.001Z",
           "tdlib": { "auth_state": "ready", "connection_state": "updating" }, "head_seq": 4812,
-          "account": { "user_id": "123456789", "display_name": "Brennan Cheung", "username": "brennan", "phone_last4": "4567" },
+          "account": { "user_id": "123456789", "display_name": "Ada Lovelace", "username": "ada", "phone_last4": "4567" },
           "monitored_chat_count": 2, "grant_count": 1,
           "webhooks": { "active": 1, "retrying": 0, "paused": 0 },
           "events_last_hour": 37, "oldest_seq": 1, "media_cache_bytes": 1048576,
           "backfill": { "in_progress": false, "chats_pending": 0 }
         }
         """)
-        #expect(status.account?.username == "brennan")
+        #expect(status.account?.username == "ada")
         #expect(status.account?.phoneLast4 == "4567")
         #expect(status.tdlib.connectionState == .updating)
         #expect(status.webhooks.active == 1)

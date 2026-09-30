@@ -5,7 +5,7 @@
 # then `xcodegen generate` in App/) after structural changes; keep the two in sync.
 name: TelegramGateway
 options:
-  bundleIdPrefix: com.brennancheung
+  bundleIdPrefix: local
   deploymentTarget:
     macOS: "15.0"
   xcodeVersion: "26.0"
@@ -31,7 +31,7 @@ targets:
         TGWRepositoryRoot: "$(SRCROOT)/.."
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.brennancheung.telegram-gateway
+        PRODUCT_BUNDLE_IDENTIFIER: local.telegram-gateway
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: true
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
@@ -46,7 +46,7 @@ targets:
           destination: wrapper
           subpath: Contents/Library/LaunchAgents
           files:
-            - Support/LaunchAgents/com.brennancheung.telegram-gateway.daemon.plist
+            - Support/LaunchAgents/local.telegram-gateway.daemon.plist
       - copyFiles:
           destination: resources
           files:
@@ -60,7 +60,7 @@ targets:
       - target: TelegramGateway
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.brennancheung.telegram-gateway.tests
+        PRODUCT_BUNDLE_IDENTIFIER: local.telegram-gateway.tests
         GENERATE_INFOPLIST_FILE: true
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TelegramGateway.app/Contents/MacOS/TelegramGateway"
         BUNDLE_LOADER: "$(TEST_HOST)"

@@ -11,7 +11,7 @@ struct DaemonCommand: AsyncParsableCommand {
         subcommands: [Install.self, Uninstall.self, Status.self, Logs.self]
     )
 
-    static let label = "com.brennancheung.telegram-gateway"
+    static let label = "local.telegram-gateway"
 
     static var agentPlist: URL {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/LaunchAgents/\(label).plist")

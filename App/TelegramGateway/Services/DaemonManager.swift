@@ -56,14 +56,14 @@ enum DaemonLocator {
 
 /// Starts and stops the gateway. The normal route registers it with launchd through
 /// `SMAppService` so it starts at login and outlives the app; the fallback runs it as a
-/// child process of the app. Error strings are shown to the owner, so they say "gateway"
+/// child process of the app. Error strings are shown on screen, so they say "gateway"
 /// and never name launchd.
 @MainActor
 @Observable
 final class DaemonManager {
     /// The LaunchAgent plist name inside the bundle (`Contents/Library/LaunchAgents/`). Its
     /// `Label` is the same string without `.plist`.
-    static let agentLabel = "com.brennancheung.telegram-gateway.daemon"
+    static let agentLabel = "local.telegram-gateway.daemon"
     static let agentPlistName = agentLabel + ".plist"
 
     /// Whether macOS starts the gateway at login (what `SMAppService` reports).
@@ -162,7 +162,7 @@ final class DaemonManager {
         refreshAgentState()
     }
 
-    /// System Settings → General → Login Items, where the owner allows the gateway.
+    /// System Settings → General → Login Items, where the user allows the gateway.
     func openLoginItemsSettings() {
         guard !previewMode else { return }
         SMAppService.openSystemSettingsLoginItems()

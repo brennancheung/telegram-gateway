@@ -27,7 +27,7 @@ private let flowWidth: CGFloat = 380
 
 // MARK: Step 1
 
-/// The Telegram key. "Continue" saves it and starts the gateway; the owner never sees how
+/// The Telegram key. "Continue" saves it and starts the gateway; the user never sees how
 /// the gateway is started. All plumbing lives in the Gateway section.
 struct ConnectStep: View {
     @Environment(AppModel.self) private var model

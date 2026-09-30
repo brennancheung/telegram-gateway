@@ -36,7 +36,7 @@ struct AppModelTests {
         #expect(ready.screen == .loading)
         await ready.refresh()
         #expect(ready.screen == .main)
-        #expect(ready.accountName == "@brennan")
+        #expect(ready.accountName == "@ada")
         #expect(ready.pendingRequestCount == 1)
         #expect(ready.grants.count == 2)
 
@@ -52,7 +52,7 @@ struct AppModelTests {
             return model.headline
         }
         #expect(AppModel.preview(.loggedIn).headline == .init(tone: .neutral, phrase: "Connecting…"))
-        #expect(await headline(.loggedIn) == .init(tone: .ok, phrase: "Connected as @brennan"))
+        #expect(await headline(.loggedIn) == .init(tone: .ok, phrase: "Connected as @ada"))
         #expect(await headline(.reconnecting) == .init(tone: .attention, phrase: "Reconnecting to Telegram…"))
         #expect(await headline(.waitingForQR) == .init(tone: .attention, phrase: "Scan the code to sign in"))
         #expect(await headline(.waitingForPassword) == .init(tone: .attention, phrase: "Finish signing in"))
@@ -112,7 +112,7 @@ struct AppModelTests {
         await firstRun.refresh()
         #expect(firstRun.windowRequests == 1)
         #expect(!firstRun.showsSidebar)
-        // The owner may close it; it does not pop up again for the same need.
+        // The user may close it; it does not pop up again for the same need.
         await firstRun.refresh()
         #expect(firstRun.windowRequests == 1)
 
@@ -202,7 +202,7 @@ struct AppModelTests {
         await quiet.refresh()
         #expect(quiet.needsYou.isEmpty)
 
-        // Whatever keeps the gateway from working is itself something that needs the owner.
+        // Whatever keeps the gateway from working is itself something that needs the user.
         func needs(_ scenario: FakeAPIClient.Scenario, credentials: Bool = true, token: Bool = true, onboarded: Bool = true) async -> [NeedsItem] {
             let model = AppModel.preview(scenario, credentials: credentials, token: token, onboarded: onboarded)
             await model.refresh()
@@ -280,7 +280,7 @@ struct AppModelTests {
         #expect(!model.onboardingDone)
     }
 
-    @Test("Phone sign-in: phone → code → signed in; a returning owner stays on Overview")
+    @Test("Phone sign-in: phone → code → signed in; a returning user stays on Overview")
     func phoneLogin() async {
         let model = AppModel.preview(.loggedOut, has2FA: false)
         await model.refresh()

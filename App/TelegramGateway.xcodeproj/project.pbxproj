@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		AA0000000000000000000022 /* com.brennancheung.telegram-gateway.daemon.plist in Embed LaunchAgents */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000020 /* com.brennancheung.telegram-gateway.daemon.plist */; };
+		AA0000000000000000000022 /* local.telegram-gateway.daemon.plist in Embed LaunchAgents */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000020 /* local.telegram-gateway.daemon.plist */; };
 		AA0000000000000000000023 /* gateway-launcher in Embed Launcher (Resources) */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000021 /* gateway-launcher */; };
 /* End PBXBuildFile section */
 
@@ -28,7 +28,7 @@
 			dstPath = Contents/Library/LaunchAgents;
 			dstSubfolderSpec = 1;
 			files = (
-				AA0000000000000000000022 /* com.brennancheung.telegram-gateway.daemon.plist in Embed LaunchAgents */,
+				AA0000000000000000000022 /* local.telegram-gateway.daemon.plist in Embed LaunchAgents */,
 			);
 			name = "Embed LaunchAgents";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -50,7 +50,7 @@
 		AA0000000000000000000006 /* TelegramGateway.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TelegramGateway.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000007 /* TelegramGatewayTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TelegramGatewayTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA000000000000000000001E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		AA0000000000000000000020 /* com.brennancheung.telegram-gateway.daemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "com.brennancheung.telegram-gateway.daemon.plist"; sourceTree = "<group>"; };
+		AA0000000000000000000020 /* local.telegram-gateway.daemon.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "local.telegram-gateway.daemon.plist"; sourceTree = "<group>"; };
 		AA0000000000000000000021 /* gateway-launcher */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "gateway-launcher"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -117,7 +117,7 @@
 		AA0000000000000000000024 /* LaunchAgents */ = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000020 /* com.brennancheung.telegram-gateway.daemon.plist */,
+				AA0000000000000000000020 /* local.telegram-gateway.daemon.plist */,
 			);
 			path = LaunchAgents;
 			sourceTree = "<group>";
@@ -411,7 +411,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.brennancheung.telegram-gateway";
+				PRODUCT_BUNDLE_IDENTIFIER = "local.telegram-gateway";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
@@ -442,7 +442,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.brennancheung.telegram-gateway";
+				PRODUCT_BUNDLE_IDENTIFIER = "local.telegram-gateway";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
@@ -459,7 +459,7 @@
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.brennancheung.telegram-gateway.tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "local.telegram-gateway.tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;
@@ -477,7 +477,7 @@
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.brennancheung.telegram-gateway.tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "local.telegram-gateway.tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;

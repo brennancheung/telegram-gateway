@@ -7,7 +7,7 @@
 	     the launcher script finds the daemon binary (development checkout or, later, the
 	     bundled copy) and execs it. See docs/app.md. -->
 	<key>Label</key>
-	<string>com.brennancheung.telegram-gateway.daemon</string>
+	<string>local.telegram-gateway.daemon</string>
 	<key>BundleProgram</key>
 	<string>Contents/Resources/gateway-launcher</string>
 	<key>RunAtLoad</key>
@@ -18,7 +18,7 @@
 	<string>Background</string>
 	<key>AssociatedBundleIdentifiers</key>
 	<array>
-		<string>com.brennancheung.telegram-gateway</string>
+		<string>local.telegram-gateway</string>
 	</array>
 </dict>
 </plist>

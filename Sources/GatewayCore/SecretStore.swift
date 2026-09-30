@@ -10,9 +10,9 @@ import Synchronization
 /// | `InMemorySecretStore` | tests |
 ///
 /// Why: an ad-hoc-signed binary is a new identity to the Keychain after every rebuild, so
-/// each `SecItemCopyMatching` of an item another build created shows the owner a password
+/// each `SecItemCopyMatching` of an item another build created shows a password
 /// prompt. Development therefore never touches the Keychain — not even to migrate items an
-/// earlier build left there; the owner logs in fresh and the file store fills itself.
+/// earlier build left there; the user logs in again and the file store fills itself.
 public protocol SecretStore: Sendable {
     func read(_ account: String) throws -> Data?
     func write(_ account: String, _ data: Data) throws
@@ -71,7 +71,7 @@ public enum Secrets {
     }
 }
 
-/// `secrets.json`: `{ "<account>": "<base64>" }`, owner-readable only, written atomically.
+/// `secrets.json`: `{ "<account>": "<base64>" }`, mode 0600, written atomically.
 public struct FileSecretStore: SecretStore {
     public let path: URL
 

@@ -373,7 +373,7 @@ import Testing
 }
 
 @Suite struct SecretStoreTests {
-    @Test func fileStoreRoundTripsWithOwnerOnlyPermissions() throws {
+    @Test func fileStoreRoundTripsWithMode0600() throws {
         let home = FileManager.default.temporaryDirectory.appending(path: "tgw-secrets-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: home) }
         let paths = Paths(home: home)

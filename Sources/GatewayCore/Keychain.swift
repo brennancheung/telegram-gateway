@@ -3,7 +3,7 @@ import Security
 
 /// Raw access to the login Keychain (generic passwords under service `TelegramGateway`).
 /// Only `KeychainSecretStore` uses it, and only when config.json opts in — see `SecretStore`.
-/// Every read of an item another signed identity created prompts the owner, which is why
+/// Every read of an item another signed identity created prompts for the login password, which is why
 /// development binaries and tests never come here.
 public enum Keychain {
     public static let service = "TelegramGateway"

@@ -3,7 +3,7 @@ import Observation
 import OSLog
 import Synchronization
 
-let appLog = Logger(subsystem: "com.brennancheung.telegram-gateway", category: "app")
+let appLog = Logger(subsystem: "local.telegram-gateway", category: "app")
 
 /// Holds the admin token where the HTTP client (any thread) and the model (main actor) can
 /// both reach it.
@@ -13,7 +13,7 @@ final class TokenBox: Sendable {
     func set(_ token: String?) { storage.withLock { $0 = token } }
 }
 
-/// The monitored set as the owner is editing it, before Save.
+/// The monitored set as the user is editing it, before Save.
 struct MonitoredDraft: Equatable, Sendable {
     var chatIds: Set<String> = []
     var folderIds: Set<String> = []
@@ -24,7 +24,7 @@ struct MonitoredDraft: Equatable, Sendable {
     }
 }
 
-/// What the owner is about to grant for one access request.
+/// What the user is about to grant for one access request.
 struct ApprovalDraft: Equatable, Sendable {
     var request: AccessRequest
     /// Ticked chats, monitored or not. Unmonitored ones are monitored as part of approving.
@@ -37,7 +37,7 @@ struct ApprovalDraft: Equatable, Sendable {
     var showOtherChats = false
 }
 
-/// One thing that is waiting for the owner. The popover lists all of them; the window's
+/// One thing that is waiting for the user. The popover lists all of them; the window's
 /// Overview lists the app-related ones (the others are its hero's own action).
 enum NeedsItem: Identifiable, Equatable, Sendable {
     case setUp
@@ -190,7 +190,7 @@ final class AppModel {
     private(set) var lastRefresh: Date?
     var lastError: String?
     var startPhase: StartPhase = .idle
-    /// The owner is changing the Telegram key from Gateway details.
+    /// The user is changing the Telegram key from the Gateway section.
     var editingKey = false
     /// First-run setup finished (chats chosen or the banner dismissed). Persisted.
     var onboardingDone: Bool {
@@ -234,7 +234,7 @@ final class AppModel {
     /// Incremented whenever the main window should be shown and brought to the front. The
     /// menu bar scene observes it; nothing else opens the window.
     private(set) var windowRequests = 0
-    private var neededOwner = false
+    private var setupWasNeeded = false
 
     private var pollTask: Task<Void, Never>?
     private static let onboardingKey = "onboardingDone"
@@ -250,7 +250,7 @@ final class AppModel {
 
     // MARK: Factories
 
-    /// The app as the owner runs it: real config file, real secrets file, real gateway.
+    /// The app as it runs for real: real config file, real secrets file, real gateway.
     static func live(persistOnboarding: Bool = true) -> AppModel {
         var configError: String?
         let config: GatewayConfig
@@ -301,7 +301,7 @@ final class AppModel {
     var monitoredCount: Int { monitored?.effectiveChatIds.count ?? status?.monitoredChatCount ?? 0 }
     var chatsByID: [String: Chat] { Dictionary(chats.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }) }
 
-    /// "@brennan", or the display name when the account has no username.
+    /// "@ada", or the display name when the account has no username.
     var accountName: String? {
         guard let account = status?.account else { return nil }
         if let username = account.username, !username.isEmpty { return "@\(username)" }
@@ -370,7 +370,7 @@ final class AppModel {
         requests.map(NeedsItem.request) + grants.filter { $0.webhook?.state == .paused || $0.webhook?.state == .retrying }.map(NeedsItem.webhook)
     }
 
-    /// Everything waiting for the owner, whatever state the gateway is in.
+    /// Everything waiting for the user, whatever state the gateway is in.
     var needsYou: [NeedsItem] {
         switch screen {
         case .loading: []
@@ -389,7 +389,7 @@ final class AppModel {
         windowRequests += 1
     }
 
-    /// Opens the window at the place where the owner can deal with `item`.
+    /// Opens the window at the place where the user can deal with `item`.
     func open(_ item: NeedsItem) {
         switch item {
         case .setUp, .signIn:
@@ -414,10 +414,10 @@ final class AppModel {
 
     /// Setup and sign-in cannot be done from the popover, so the window opens by itself when
     /// either becomes necessary (once per occurrence: closing it is respected).
-    private func openWindowIfOwnerNeeded() {
+    private func openWindowIfSetupNeeded() {
         let needed = initialised && (screen == .connect || screen == .login)
-        if needed, !neededOwner { requestWindow() }
-        neededOwner = needed
+        if needed, !setupWasNeeded { requestWindow() }
+        setupWasNeeded = needed
     }
 
     // MARK: Polling
@@ -480,7 +480,7 @@ final class AppModel {
         defer {
             initialised = true
             lastRefresh = Date()
-            openWindowIfOwnerNeeded()
+            openWindowIfSetupNeeded()
         }
         guard reachable, token != nil, let health else { return }
         if let auth, auth.authState.isLoggedIn != health.tdlib.authState.isLoggedIn { self.auth = nil }
@@ -548,7 +548,7 @@ final class AppModel {
 
     /// Starts the gateway, or restarts it when it is already running so it rereads the key.
     /// Tries the login-item route first; if that does not bring it up, runs it inside the
-    /// app instead. The owner is never asked which.
+    /// app instead. The user is never asked which.
     func startGateway() async {
         startPhase = .starting
         daemon.clearError()
@@ -669,7 +669,7 @@ final class AppModel {
         }
     }
 
-    /// Telegram's and the gateway's error codes in the owner's words.
+    /// Telegram's and the gateway's error codes in plain words.
     static func loginMessage(for error: APIError) -> String {
         switch error.reason {
         case "wrong_password": return "That password isn't right."
@@ -724,7 +724,7 @@ final class AppModel {
         }
     }
 
-    /// Adopts the gateway's monitored set; the draft follows unless the owner has edits.
+    /// Adopts the gateway's monitored set; the draft follows unless there are unsaved edits.
     private func setMonitored(_ new: MonitoredChats) {
         let wasDirty = isDraftDirty
         monitored = new
@@ -857,7 +857,7 @@ final class AppModel {
 
     /// Approves the open request. Ticked chats that are not monitored yet are added to the
     /// monitored set first (docs/grants.md: a grant never exceeds the monitored set, and the
-    /// app monitors first so the owner makes one decision).
+    /// app monitors first so the user makes one decision).
     @discardableResult
     func approve() async -> Bool {
         guard let draft = approval, canApprove(draft) else { return false }

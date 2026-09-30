@@ -1,23 +1,44 @@
-# Agents working in this repository
+# Working in this repository
 
-Read `README.md` first, then `docs/goal.md` and `docs/design.md`. They are the contract.
-`docs/status.md` says what is built and what is next — update it when you finish something.
+Instructions for coding agents and human contributors alike.
 
-Rules:
+Read `README.md` first, then `docs/architecture.md`. To build, test and run:
+`docs/development.md`. The contract apps rely on is `docs/api.md`, `docs/events.md` and
+`docs/grants.md`. `docs/status.md` says what works and what is planned.
 
-- **Capability before UI.** Library function → `tgw` command → daemon endpoint → menu bar app.
-  Never build UI for something that does not work from the CLI yet.
-- **Only the daemon loads TDLib.** Never open TDLib's directory from anything else, never run
-  two TDLib instances on the same directory. See docs/design.md "Why one TDLib owner".
-- **Consumers never see TDLib JSON.** Anything crossing the API is in the format in
-  `docs/events.md` / `docs/api.md`. If you change the format, change the doc in the same commit.
-- **Do not send messages, mark as read, or set online status** from any code path. The account
-  is the owner's real account.
-- **Never commit** the TDLib build artifact, `api_id`/`api_hash`, tokens, or anything from
-  `~/Library/Application Support/TelegramGateway/`.
-- **Use the pinned TDLib commit** in `vendor/tdlib/COMMIT`. Bumping it is a deliberate change.
-- Swift 6 strict concurrency. Actors for anything holding TDLib or SQLite state.
-- `swift build` and `swift test` must pass before handing back.
-- Documentation lives in `docs/`, never elsewhere. Write for a reader who has never seen
-  Telegram's API: define every term the first time you use it.
-- Commit messages: subject + body, no attribution trailers.
+## Rules
+
+- **Capability before UI.** A feature exists as a library function first, then as a `tgw`
+  command, then as an API endpoint, and only then in the menu bar app. Never build UI for
+  something that does not work from the command line.
+- **Only the gateway loads TDLib.** TDLib is Telegram's client library; its data directory
+  can be open in one process at a time. Nothing else opens that directory, and two TDLib
+  instances never run on it. See "Why exactly one process owns TDLib" in
+  `docs/architecture.md`.
+- **Apps never see TDLib's JSON.** Everything that crosses the API is in the format defined
+  in `docs/events.md` and `docs/api.md`. If you change the format, change the document in
+  the same commit.
+- **Never send a message, mark anything as read, or make the account appear online**, from
+  any code path, including tests and debugging tools. The gateway runs on a real personal
+  Telegram account. That means no `sendMessage`, `viewMessages` or `openChat`, and the
+  `online` option stays false.
+- **Never commit secrets or build artifacts**: no `api_id` or `api_hash`, no tokens, nothing
+  from `~/Library/Application Support/TelegramGateway/`, and not the built TDLib library.
+- **Use the pinned TDLib commit** in `vendor/tdlib/COMMIT`. Changing it is a deliberate
+  change of its own, with the translator's fixtures checked against the new schema.
+- **Swift 6 with strict concurrency.** Anything that holds SQLite or TDLib state is an actor.
+  No force-unwrapping of data that comes from outside the process.
+- **`swift build` and `swift test` pass before you hand work back.** New behaviour comes with
+  tests. Tests need no Telegram account and no network: TDLib sits behind the
+  `TDLibRequesting` protocol and time behind `GatewayClock`, so use the fakes in
+  `Sources/GatewayTestSupport`.
+- **Development builds and tests must not read the macOS Keychain.** A binary from
+  `swift build` is ad-hoc signed and looks like a new program to the Keychain after every
+  rebuild, so each read stops and asks the person at the keyboard for their login password.
+  Secrets go through `SecretStore`: the file store by default, `InMemorySecretStore` in
+  tests. Never construct `KeychainSecretStore` in a test, and never run a command in
+  Keychain mode while developing.
+- **Documentation lives in `docs/` and changes with the code.** Write for a reader who has
+  never used Telegram's API: define each term the first time it appears, describe how the
+  system works now, and give durations of a minute or more as `mm:ss`.
+- **Commit messages** have a subject and a body, and no attribution trailers.

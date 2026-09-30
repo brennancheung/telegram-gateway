@@ -96,7 +96,7 @@ extension TelegramControl {
 /// The daemon's TDLib client: owns the instance, answers `waitTdlibParameters`, sets
 /// `online = false` on `ready`, tracks the connection state, and forwards every update to
 /// the monitor through `updates`. After `logOut` TDLib closes; a fresh client is created so
-/// the owner can log in again without restarting the daemon.
+/// the user can log in again without restarting the daemon.
 public actor TelegramSession: TelegramControl {
     public nonisolated let updates: AsyncStream<JSONBox>
     private let forward: AsyncStream<JSONBox>.Continuation

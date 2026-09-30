@@ -1,6 +1,6 @@
 import Foundation
 
-/// The device-code style flow (docs/api.md "Access requests"): an app asks, the owner approves
+/// The device-code style flow (docs/api.md "Access requests"): an app asks, the user approves
 /// or denies, the app polls. Expiries: a pending request lasts `15:00`; a resolved one is
 /// purged `10:00` after resolution and polling it returns `404`.
 public actor AccessRequests {

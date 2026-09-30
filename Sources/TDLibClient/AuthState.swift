@@ -21,7 +21,7 @@ public enum AuthState: Sendable, Equatable {
     case waitOtherDeviceConfirmation(link: String)
     /// The phone number has no account; `registerUser` would create one.
     case waitRegistration
-    /// Two-step verification: send `checkAuthenticationPassword`. `hint` is the owner's own hint.
+    /// Two-step verification: send `checkAuthenticationPassword`. `hint` is the hint the account holder set.
     case waitPassword(hint: String)
     /// Logged in; the API is usable.
     case ready

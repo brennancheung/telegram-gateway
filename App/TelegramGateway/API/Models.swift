@@ -314,7 +314,7 @@ struct ChatPage: Decodable, Hashable, Sendable {
     var nextCursor: String?
 }
 
-/// `GET /v1/admin/folders`: a Telegram chat folder (a named tab in the owner's Telegram apps).
+/// `GET /v1/admin/folders`: a Telegram chat folder (a named tab in the Telegram apps).
 struct Folder: Decodable, Hashable, Identifiable, Sendable {
     var id: String
     var title: String
@@ -514,7 +514,7 @@ struct DeliveryList: Decodable, Sendable {
 
 // MARK: - Scopes
 
-/// The scopes in docs/grants.md, with the one-line meaning the owner sees when approving.
+/// The scopes in docs/grants.md, with the one-line meaning shown when approving.
 enum Scope {
     static let all = ["messages:read", "history:read", "media:read", "chats:read", "messages:send"]
 

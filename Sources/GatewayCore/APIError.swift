@@ -116,7 +116,7 @@ public struct APIError: Error, Sendable, Equatable, CustomStringConvertible {
     }
 
     public static func notLoggedIn(authState: String) -> APIError {
-        APIError(status: 503, code: "not_logged_in", message: "The gateway has no Telegram session; the owner must log in.", details: ["auth_state": .string(authState)])
+        APIError(status: 503, code: "not_logged_in", message: "The gateway has no Telegram session; log in to Telegram first.", details: ["auth_state": .string(authState)])
     }
 
     public static func telegramUnavailable(connectionState: String) -> APIError {
