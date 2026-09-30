@@ -52,7 +52,7 @@
   <text class="s halo" x="510" y="172" text-anchor="middle">“Community Analytics wants access”</text>
 
   <rect class="frame" x="70" y="202" width="350" height="110" rx="6"/>
-  <text class="s m" x="122" y="222">loop · every 3s until the user decides</text>
+  <text class="s m" x="122" y="222">loop · every 3s until the user answers</text>
 
   <path class="ln" d="M110,250 H377" marker-end="url(#arrow)"/>
   <text class="c halo" x="245" y="242" text-anchor="middle">GET /v1/access-requests/{id}</text>
