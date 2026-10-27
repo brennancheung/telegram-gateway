@@ -209,6 +209,9 @@ where you decide exactly what it gets:
   you add later.
 - **Can read.** One checkbox per permission it asked for. You can remove permissions; you
   cannot add ones it did not ask for.
+- **Can act as you.** Only when the app asked to act on your account: a checkbox for each
+  of "Send and react", "Mark as read" and "Manage chats" it asked for. Untick one to let the app do the rest
+  without it. (This section is written but has not yet been built or run.)
 
 The bar at the bottom summarises the decision ("3 chats · 3 permissions"). **Approve** gives
 the app its access; **Cancel** leaves the request pending.
@@ -222,11 +225,14 @@ the app its access; **Cancel** leaves the request pending.
 | Past messages | `history:read` | Read messages from before it was connected, as far back as your account can see. |
 | Photos and files | `media:read` | Download what is attached to those messages. Without it, the app sees that a message has a photo, not the photo. |
 | Chat names and details | `chats:read` | See the titles, usernames and member counts of its chats. |
-| Send messages | `messages:send` | Nothing yet. Sending is not available in this version, and a request for it is refused. |
+| Send and react | `messages:send` | Act on messages **as you** in its chats: send messages and files, forward, edit and delete what you sent, react, and vote in polls. People in those chats see it as you. Shown under its own heading, **Can act as you**, when approving and in the app's detail. |
+| Mark as read | `messages:mark_read` | Mark messages read **as you** in its chats when you read them there. The people who wrote them see read receipts. Under **Can act as you**. |
+| Manage chats | `chats:manage` | Pin, archive and mute its chats, which changes how they appear in your own Telegram apps, and look up a chat by username or phone number. Also under **Can act as you**. |
 
 An app only ever sees chats that are both granted to it and currently monitored.
 
-**An app's detail.** Select an app under **Has access** to see what it can read, which chats
+**An app's detail.** Select an app under **Has access** to see what it can read, whether it
+can act as you (under **Can act as you**), which chats
 it has (a chat you no longer monitor says so in amber), and how it receives messages:
 **Sends to** with the host and the last delivery for a webhook, or "Directly to the gateway"
 with when it was last connected.

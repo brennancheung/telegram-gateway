@@ -1,8 +1,9 @@
 # Telegram Gateway
 
-Telegram Gateway is a local, read-only API for building applications that consume Telegram
-messages. It runs on macOS, connects through a Telegram user account, and delivers events
-from selected chats over HTTP, WebSocket, or webhooks.
+Telegram Gateway is a local API for building applications that consume Telegram messages,
+and, when the account owner allows it, reply to them and act on them. It runs on macOS, connects through a
+Telegram user account, and delivers events from selected chats over HTTP, WebSocket, or
+webhooks.
 
 The account owner signs in once, chooses which chats to monitor, and approves each
 application's access. Applications receive scoped, revocable gateway tokens without handling
@@ -39,11 +40,29 @@ The gateway puts the login in one place:
 - **Resumable delivery.** Events are numbered and stored before delivery. Apps resume from
   their last processed sequence number while those events remain retained. Webhook consumers
   must handle duplicate deliveries.
-- **Read-only operation.** The gateway never sends messages, marks messages as read, or sets
-  the Telegram account online.
+- **Read-only unless you allow acting.** The gateway sends, forwards, edits, deletes,
+  reacts, votes, or pins, archives or mutes a chat only when the owner does (`tgw`) or an
+  app holds the permission for that chat (`messages:send`, `chats:manage`). It marks
+  messages as read only when a person read them: the owner with `tgw read`, or an app holding
+  `messages:mark_read` when its user opens the chat. It never sets the account online.
+
+- **Linkable to Volgenic.** `tgw link add` connects the gateway out to a Volgenic account,
+  which can then sign in, choose chats, read and send through it without reaching your Mac
+  from outside ([docs/link.md](docs/link.md)).
 
 Typical integrations include product-mention alerts, support triage, news summarization, and
 community analytics. The gateway delivers messages; consuming applications perform analysis.
+
+## Actions
+
+An app holding `messages:send` can, in the chats granted to it, send formatted text and
+files (photos, videos, documents, voice notes, audio, animations, stickers), forward
+messages, edit and delete the account's own messages, react, and vote in polls. One holding
+`chats:manage` can pin, archive and mute those chats, and look up a chat by username or
+phone number. One holding `messages:mark_read` can mark a chat read when its user opens it,
+so the senders see read receipts, as in the Telegram app. The owner can do the same with `tgw`, which asks before acting unless given
+`--yes`. See [docs/api.md](docs/api.md#message-and-chat-actions). The actions are new and
+have not yet been tried against a live Telegram account.
 
 ## Status
 
@@ -141,23 +160,28 @@ consumer.
 | Look up an endpoint | [docs/api.md](docs/api.md) |
 | Look up the event format | [docs/events.md](docs/events.md) |
 | Understand what an app can and cannot see | [docs/grants.md](docs/grants.md) |
+| Link the gateway to Volgenic | [docs/link.md](docs/link.md) |
 | Understand how the gateway works | [docs/architecture.md](docs/architecture.md) |
 | Build, run and contribute | [docs/development.md](docs/development.md) |
 | See what works and what is planned | [docs/status.md](docs/status.md) |
 
 ## What it does not do
 
-- **Send messages.** The gateway is read-only. A permission for sending is reserved but not
-  implemented.
+- **Appear online or show "typing…".** No action does, and nothing joins or leaves a group
+  or channel. Messages are marked read only when someone asks to, never by the gateway on
+  its own.
 - **Analyze anything.** No classification, sentiment or search. Apps do that.
 - **Serve other machines directly.** The API listens on `127.0.0.1` only. An app running
-  elsewhere can still receive events through webhooks.
+  elsewhere can still receive events through webhooks, and a Volgenic account the owner
+  linked reaches the gateway over a connection the gateway opens.
 - **Handle more than one Telegram account**, or run on anything but macOS.
 
 ## Security and privacy
 
 - The API listens only on `127.0.0.1`. Data and administrative endpoints require tokens;
   health checks and access-request submission and polling do not.
+- A link to Volgenic acts with the admin token's powers, except secrets: link only your own
+  Volgenic account. Its token is kept in the secret store.
 - Grant records store app-token hashes. Approved access requests retain the token for a
   `10:00` collection window. The admin token is stored in the configured secret store, and
   webhook signing secrets are stored in the gateway database.
@@ -183,6 +207,7 @@ Sources/
   CTDLib/           C module over TDLib's JSON interface
   TDLibClient/      Swift wrapper: requests, updates, sign-in states
   GatewayCore/      store, event log, grants, translation from TDLib to events, delivery
+  GatewayLink/      the outbound link to Volgenic
   GatewayServer/    the HTTP and WebSocket API
   GatewayDaemon/    the background service
   tgw/              command-line tool

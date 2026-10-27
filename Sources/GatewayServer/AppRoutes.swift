@@ -68,7 +68,7 @@ struct PublicRoutes {
 }
 
 /// Routes for app tokens (the admin token works too): own grant, webhook settings, chats,
-/// events, history, media.
+/// events, history, sending, media.
 struct AppRoutes {
     let deps: Dependencies
 
@@ -81,6 +81,16 @@ struct AppRoutes {
         group.get("/chats") { _, context in try await chats(context) }
         group.get("/chats/:chat_id") { _, context in try await chat(context) }
         group.get("/chats/:chat_id/messages") { request, context in try await history(request, context) }
+        group.post("/chats/:chat_id/messages") { request, context in try await sendMessage(request, context) }
+        group.post("/chats") { request, context in try await startChat(request, context) }
+        group.patch("/chats/:chat_id") { request, context in try await settings(request, context) }
+        group.post("/chats/:chat_id/forward") { request, context in try await forward(request, context) }
+        group.patch("/chats/:chat_id/messages/:message_id") { request, context in try await edit(request, context) }
+        group.delete("/chats/:chat_id/messages") { request, context in try await deleteMessages(request, context) }
+        group.put("/chats/:chat_id/messages/:message_id/reactions") { request, context in try await react(request, context, remove: false) }
+        group.delete("/chats/:chat_id/messages/:message_id/reactions") { request, context in try await react(request, context, remove: true) }
+        group.post("/chats/:chat_id/messages/:message_id/poll") { request, context in try await vote(request, context) }
+        group.post("/chats/:chat_id/read") { request, context in try await markRead(request, context) }
         group.get("/events") { request, context in try await events(request, context) }
         group.get("/media/:media_id") { request, context in try await media(request, context, head: false) }
         group.head("/media/:media_id") { request, context in try await media(request, context, head: true) }
@@ -144,8 +154,11 @@ struct AppRoutes {
     func chats(_ context: GatewayRequestContext) async throws -> Response {
         let principal = try context.requirePrincipal()
         try await deps.grants.require(.chatsRead, principal)
-        let chats = try await deps.grants.chats(for: principal)
-        return json(["chats": .array(chats.map { $0.chat.json(isMonitored: $0.isMonitored) })])
+        var items: [JSONValue] = []
+        for (chat, isMonitored) in try await deps.grants.chats(for: principal) {
+            items.append(await deps.live(chat).json(isMonitored: isMonitored))
+        }
+        return json(["chats": .array(items)])
     }
 
     func chat(_ context: GatewayRequestContext) async throws -> Response {
@@ -157,7 +170,7 @@ struct AppRoutes {
         }
         guard let chat = try await deps.store.chat(chatId) else { throw APIError.chatNotGranted }
         let monitored = try await deps.store.effectiveMonitoredChatIds().contains(chatId)
-        return json(["chat": chat.json(isMonitored: monitored)])
+        return json(["chat": await deps.live(chat).json(isMonitored: monitored)])
     }
 
     // MARK: History
@@ -182,6 +195,17 @@ struct AppRoutes {
             "has_more": .bool(page.count >= limit),
             "next_before": .id(page.last?.message.id ?? before),
         ])
+    }
+
+    // MARK: Sending
+
+    func sendMessage(_ request: Request, _ context: GatewayRequestContext) async throws -> Response {
+        let principal = try context.requirePrincipal()
+        try await deps.grants.require(.messagesSend, principal)
+        let chatId = try parseChatId(try context.parameters.require("chat_id"), field: "chat_id")
+        let body = try await jsonBody(request, context, limit: ActionInput.maxUploadBodyBytes)
+        let message = try await deps.sender.send(body, to: chatId, as: principal)
+        return json(["message": message.json], status: .created)
     }
 
     // MARK: Events

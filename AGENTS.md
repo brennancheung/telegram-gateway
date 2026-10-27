@@ -19,10 +19,19 @@ walkthrough for someone setting it up. To build, test and run:
 - **Apps never see TDLib's JSON.** Everything that crosses the API is in the format defined
   in `docs/events.md` and `docs/api.md`. If you change the format, change the document in
   the same commit.
-- **Never send a message, mark anything as read, or make the account appear online**, from
-  any code path, including tests and debugging tools. The gateway runs on a real personal
-  Telegram account. That means no `sendMessage`, `viewMessages` or `openChat`, and the
-  `online` option stays false.
+- **Send only through `MessageSender`, and only when a person asked.** The gateway runs on a
+  real personal Telegram account. A message is sent only for an app holding an approved
+  `messages:send` grant for that chat, or for the owner's own `tgw send`; both go through
+  `MessageSender`, the one caller of `sendMessage`. Never send from tests, fakes, scripts or
+  debugging tools against a real account: tests use `FakeTDLib`, which sends nothing.
+- **Mark as read only when a person read it, through `MessageReader`, and never appear
+  online.** Marking messages read sends read receipts to their senders, so it happens only
+  when a person read the chat: for an app holding an approved `messages:mark_read` grant for
+  that chat, or for the owner's own `tgw read`. Both go through `MessageReader`, the one
+  caller of `viewMessages` (always with `force_read`) and `readAllChatMentions`. Nothing
+  else marks anything read, and nothing marks a real account read from tests, fakes,
+  scripts or debugging tools. Never appearing online stays absolute, from every code path:
+  no `openChat`, no chat actions such as "typing…", and the `online` option stays false.
 - **Never commit secrets or build artifacts**: no `api_id` or `api_hash`, no tokens, nothing
   from `~/Library/Application Support/TelegramGateway/`, and not the built TDLib library.
 - **Use the pinned TDLib commit** in `vendor/tdlib/COMMIT`. Changing it is a deliberate

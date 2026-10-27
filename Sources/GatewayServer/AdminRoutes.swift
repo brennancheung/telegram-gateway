@@ -1,5 +1,6 @@
 import Foundation
 import GatewayCore
+import GatewayLink
 import HTTPTypes
 import Hummingbird
 import TDLibClient
@@ -10,8 +11,9 @@ struct AdminRoutes {
     let deps: Dependencies
 
     func register(on group: RouterGroup<GatewayRequestContext>) {
-        group.get("/status") { _, _ in try await status() }
+        group.get("/status") { _, context in try await status(viaLink: context.viaLink) }
         group.post("/reload") { _, _ in try await reload() }
+        group.get("/links") { _, _ in json(["links": await linksJSON()]) }
         group.get("/auth") { _, _ in try await auth() }
         group.post("/auth/qr") { _, _ in try await authStep { try await deps.telegram.requestQr() } }
         group.post("/auth/phone") { request, context in
@@ -57,7 +59,8 @@ struct AdminRoutes {
 
     // MARK: Status and login
 
-    func status() async throws -> Response {
+    /// Over a link the `links` list is left out: it may name links to other Volgenic servers.
+    func status(viaLink: Bool = false) async throws -> Response {
         let authState = await deps.telegram.authStateName()
         let connection = await deps.telegram.connectionState()
         let grants = try await deps.grants.list(includeRevoked: false)
@@ -66,7 +69,7 @@ struct AdminRoutes {
             if let state = grant.webhook?.state.rawValue { webhooks[state, default: 0] += 1 }
         }
         let backfill = await deps.monitor.backfill
-        return json([
+        var body: JSONObjectValue = [
             "status": authState == "ready" && connection == .ready ? "ok" : "degraded",
             "version": .string(deps.version),
             "started_at": .date(deps.startedAt),
@@ -82,7 +85,14 @@ struct AdminRoutes {
             "oldest_seq": .optional(try await deps.eventLog.oldestSeq()),
             "media_cache_bytes": .number(Double(try await deps.mediaCache.cachedBytes())),
             "backfill": ["in_progress": .bool(backfill.inProgress), "chats_pending": .number(Double(backfill.chatsPending))],
-        ])
+        ]
+        if !viaLink { body["links"] = await linksJSON() }
+        return json(.object(body))
+    }
+
+    /// Every link to Volgenic and its state (docs/link.md "Link state").
+    func linksJSON() async -> JSONValue {
+        .array(await deps.links?.statuses().map(\.json) ?? [])
     }
 
     /// Re-reads config.json and brings the Telegram session in line with it, without
@@ -195,22 +205,18 @@ struct AdminRoutes {
         let query = Query(request)
         let monitored = try await deps.store.effectiveMonitoredChatIds()
         guard query.bool("all") else {
-            let chats = try await deps.store.chats(monitored.sorted())
-            return json(["chats": .array(chats.map { $0.json(isMonitored: true) })])
+            var items: [JSONValue] = []
+            for chat in try await deps.store.chats(monitored.sorted()) {
+                items.append(await deps.live(chat).json(isMonitored: true))
+            }
+            return json(["chats": .array(items)])
         }
         let limit = try query.int("limit", default: 200, range: 1...500)
         let offset = query.string("cursor").flatMap(AdminRoutes.decodeCursor) ?? 0
-        let tdlib = try await deps.telegram.requireLive()
-        let mainList: JSONObject = ["@type": "chatListMain"]
-        for _ in 0..<100 {
-            do {
-                _ = try await tdlib.request("loadChats", ["chat_list": mainList, "limit": 100])
-            } catch let error as TDLibError where error.code == 404 {
-                break
-            }
-        }
-        let response = try await tdlib.request("getChats", ["chat_list": mainList, "limit": 10_000]).object
-        let ids = (response.array("chat_ids") ?? []).compactMap(Translator.int64)
+        _ = try await deps.telegram.requireLive()
+        let list = query.string("list") ?? "main"
+        guard list == "main" || list == "archive" else { throw APIError.invalidRequest("list", "must be main or archive") }
+        let ids = try await deps.translator.chatList(archived: list == "archive")
         let slice = ids.dropFirst(offset).prefix(limit)
         var items: [JSONValue] = []
         for id in slice {

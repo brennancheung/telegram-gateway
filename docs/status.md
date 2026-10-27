@@ -8,20 +8,43 @@ limitations below should inform deployment decisions.
 
 ## What works today
 
+- **Actions**, new: sending formatted text and files (photos, videos, documents, voice
+  notes, audio, animations, stickers), forwarding, editing and deleting the account's own
+  messages, reactions, poll votes, pinning, archiving and muting chats, and starting a chat
+  by username or phone number ([api.md](api.md#message-and-chat-actions)). Each works from
+  the library, `tgw`, the HTTP API and the link to Volgenic, and all go through
+  `MessageSender`'s checks. Tested with the scripted stand-in for TDLib only; see below.
+
+- **Mirror fields**, new: read counts and receipts, manual unread markers, main-list pins
+  and order, archive/mute state, reactions, formatting, forum topic ids, polls and common
+  service-message text. Fake TDLib fixtures cover snapshots, updates, coalescing and API
+  scope filtering. These additions are unverified against a live account.
+
 - **Building from source**: TDLib at a pinned commit, the Swift package (`GatewayDaemon`,
   `tgw`), and the menu bar app. See [development.md](development.md) and [app.md](app.md).
 - **The gateway service**: runs in the foreground or as a LaunchAgent, keeps its data in one
   directory, refuses to run twice on the same data, shuts down cleanly.
 - **The whole API in [api.md](api.md)**: health, the access-request flow, grants and scopes,
   the monitored set and folders, paged events, the WebSocket stream with resume, history,
-  media with range requests, webhooks with signatures and retries, the login endpoints,
+  sending and the other actions with `messages:send` and `chats:manage`, media with range requests, webhooks with signatures and retries, the login endpoints,
   pruning, rate limits.
 - **The event log**: numbered events, resume from any sequence number, retention and pruning.
 - **Webhook delivery**: ordered batches, HMAC signatures, the retry schedule, pause and
   resume, recovery of an interrupted delivery after a restart.
 - **Administration** from the menu bar app and from `tgw`: install and inspect the
   LaunchAgent, reload the configuration in place, change the monitored set, approve, deny
-  and revoke, follow the event stream.
+  and revoke, follow the event stream, and act as yourself: `tgw send` (also with
+  `--file`), `tgw forward`, `tgw edit`, `tgw delete`, `tgw react`, `tgw vote` and
+  `tgw chat pin|archive|mute|start`, each asking first unless `--yes`.
+- **Marking as read**, new: `POST /v1/chats/{chat_id}/read` with `messages:mark_read`, and
+  `tgw read`, through `MessageReader`, the one caller of `viewMessages`. Tested with the
+  scripted stand-in for TDLib only; see below.
+- **Links to Volgenic** ([link.md](link.md)), new: `tgw link add/list/remove`, the outbound
+  WebSocket with `hello`, requests run through the admin API in process, `subscribe` with
+  backlog, live events and `gap`, `auth_state` pushes, reconnecting with backoff, and the stop
+  when Volgenic refuses the token. Tested against a stand-in for Volgenic in the test process
+  and run once by hand, with a real gateway (no Telegram credentials) against a stand-in
+  server on `127.0.0.1`.
 - **Tests**: the suite runs without a Telegram account and without network access, and
   covers everything above, including the translation of each TDLib update into the event
   format in [events.md](events.md).
@@ -43,6 +66,30 @@ built from that schema. The following behavior still requires live-account verif
 - Member counts and how often Telegram reports them.
 - Media: downloading on demand, progress while downloading, and eviction from the cache.
 - Long-running behaviour: days of uptime, reconnects, Telegram's rate limits on history.
+- Sending, which is new: that `sendMessage` followed by `updateMessageSendSucceeded` behaves
+  as the tests assume, that the confirmed message becomes exactly one `message.new`, how
+  Telegram's errors and flood waits look in practice, whether `30s` is the right time to
+  wait, and whether Telegram, seeing the account send, marks the chat as read or shows the
+  account as online on the user's other devices even though the gateway asks for neither.
+- **The actions**, which are new. None has been run against Telegram. Unverified: that
+  each TDLib request is accepted as the gateway builds it; how TDLib reports the results
+  (in particular that a forwarded message, an edit, a deletion, a reaction, a vote and a
+  pin, archive or mute each become exactly one event); which reactions and deletions
+  Telegram refuses and with what text; whether TDLib fills in a voice note's duration and
+  waveform when they are not given; whether uploads of 20 MiB finish within `30s`;
+  whether `searchUserByPhoneNumber` finds people who are not contacts; and that reacting
+  and voting work on a chat that is not open, without marking it read.
+- **Marking as read**, which is new: that `viewMessages` with `force_read` marks a closed
+  chat read without `openChat`; that the senders see read receipts and the user's other
+  devices clear the badge; that one `chat.read` results; whether `readAllChatMentions`
+  clears mentions as the tests assume; and whether a read makes Telegram show the account
+  as recently online to others.
+- **The link to Volgenic**, which is new. It has not been run against a real Volgenic server
+  or with a signed-in account: not the TLS connection to `wss://volgenic.com`, Volgenic's
+  `401` and `4401`, its pings, a sign-in driven from Volgenic, media of several megabytes in
+  one frame, or a link held open for days through sleep and network changes.
+- The menu bar app's **Can act as you** section (`messages:send` and `chats:manage`) has
+  not been built or run: it was written without Xcode.
 
 `tgw watch` exists to check the second item directly: it prints each message as TDLib
 reports it, next to the message's own timestamp.
@@ -51,7 +98,11 @@ reports it, next to the message's own timestamp.
 
 - macOS on Apple silicon only, macOS 15 or later.
 - One Telegram account per gateway.
-- Read-only. The gateway cannot send messages.
+- Actions cannot send several files as one album, schedule a message, send into a forum
+  topic, join or leave a group or channel, or edit or delete other people's messages. A
+  sent message cannot be told apart from one the user typed on their phone.
+- An uploaded file waits in the data directory until Telegram answers. If the gateway stops
+  first, the file stays until a start more than `24:00:00` later removes it.
 - No packaged release. You build from source, which needs Xcode, cmake and a few minutes.
 - You need your own `api_id` and `api_hash` from https://my.telegram.org.
 - Apps on other machines can receive webhooks but cannot open the WebSocket or call the
@@ -61,13 +112,17 @@ reports it, next to the message's own timestamp.
 - Webhook signing secrets are stored unencrypted in the gateway's database, since the
   gateway signs with them. An approved app's token is stored unencrypted for the `10:00` in
   which the app may collect it.
-- Reactions, poll contents, read state, forum topics and secret chats are not part of the
-  event format.
+- Secret chats, archive/folder pin order and structured topic metadata
+  are not part of the event format. Mirroring still requires monitoring and granting chats;
+  these additions do not automatically expand access.
 - On the WebSocket, a bad token is reported with a close code after the upgrade, not with an
   HTTP `401`.
 - A locally built menu bar app may fail to register the gateway to start at login; macOS
   reports it registered but does not start it. Installing the LaunchAgent with
   `tgw daemon install` works, as does letting the app run the gateway while it is open.
+- A link to Volgenic has the admin token's powers except secrets, including sending messages
+  as the user; there is no narrower link. The menu bar app does not show links yet: use
+  `tgw link`.
 - There are two ways to run the gateway at login (the app's and `tgw daemon install`). Use
   one; a second gateway on the same data directory refuses to start.
 
@@ -77,5 +132,4 @@ reports it, next to the message's own timestamp.
 - The gateway bundled inside the menu bar app, so that installing the app is the whole
   installation and no command-line step is needed.
 - A signed, notarized release, with secrets in the Keychain.
-- Sending messages, behind its own scope (`messages:send`) that the user grants explicitly.
 - Consumers on other machines holding a WebSocket, over a private network.

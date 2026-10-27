@@ -1,5 +1,6 @@
 import Foundation
 import GatewayCore
+import GatewayLink
 import HTTPTypes
 import Hummingbird
 import HummingbirdCore
@@ -8,6 +9,16 @@ import Logging
 import NIOCore
 
 /// Everything the routes need, built by the daemon (real) or a test (fakes).
+extension Dependencies {
+    /// A cached chat with its read state and position as TDLib reports them now. The store
+    /// holds the state of monitored chats; this also covers granted chats no longer monitored.
+    func live(_ chat: ChatInfo) async -> ChatInfo {
+        var chat = chat
+        if let state = await translator.state(chat.id) { chat.state = state }
+        return chat
+    }
+}
+
 public struct Dependencies: Sendable {
     public var store: Store
     public var eventLog: EventLog
@@ -16,10 +27,17 @@ public struct Dependencies: Sendable {
     public var monitor: Monitor
     public var translator: Translator
     public var mediaCache: MediaCache
+    /// Sends messages (`POST /v1/chats/{chat_id}/messages`). It must see every TDLib update
+    /// through `observe` to learn whether a message was sent.
+    public var sender: MessageSender
+    /// Marks messages read (`POST /v1/chats/{chat_id}/read`); the only caller of `viewMessages`.
+    public var reader: MessageReader
     public var dispatcher: WebhookDispatcher?
     public var telegram: any TelegramControl
     /// Re-reads config.json (`POST /v1/admin/reload`); nil where reloading is not available.
     public var reloader: ConfigReloader?
+    /// The links to Volgenic (docs/link.md); nil where the gateway runs none.
+    public var links: LinkManager?
     public var rateLimiter: RateLimiter
     public var clock: any GatewayClock
     public var config: Config
@@ -30,8 +48,8 @@ public struct Dependencies: Sendable {
 
     public init(
         store: Store, eventLog: EventLog, grants: Grants, accessRequests: AccessRequests, monitor: Monitor,
-        translator: Translator, mediaCache: MediaCache, dispatcher: WebhookDispatcher?, telegram: any TelegramControl,
-        reloader: ConfigReloader? = nil, rateLimiter: RateLimiter, clock: any GatewayClock, config: Config, shutdown: ShutdownSignal = ShutdownSignal(),
+        translator: Translator, mediaCache: MediaCache, sender: MessageSender? = nil, uploadDirectory: URL? = nil, dispatcher: WebhookDispatcher?, telegram: any TelegramControl,
+        reloader: ConfigReloader? = nil, links: LinkManager? = nil, rateLimiter: RateLimiter, clock: any GatewayClock, config: Config, shutdown: ShutdownSignal = ShutdownSignal(),
         startedAt: Date, version: String = "0.1.0", logger: Logger = Logger(label: "server")
     ) {
         self.store = store
@@ -41,9 +59,12 @@ public struct Dependencies: Sendable {
         self.monitor = monitor
         self.translator = translator
         self.mediaCache = mediaCache
+        self.sender = sender ?? MessageSender(grants: grants, translator: translator, telegram: telegram, rateLimiter: rateLimiter, clock: clock, uploadDirectory: uploadDirectory)
+        self.reader = MessageReader(grants: grants, translator: translator, telegram: telegram, rateLimiter: rateLimiter)
         self.dispatcher = dispatcher
         self.telegram = telegram
         self.reloader = reloader
+        self.links = links
         self.rateLimiter = rateLimiter
         self.clock = clock
         self.config = config
@@ -88,11 +109,22 @@ public struct GatewayRequestContext: RequestContext, WebSocketRequestContext {
     public var principal: Principal?
     public var requestId: String
     public var rateLimit: (limit: Int, remaining: Int)?
+    /// True for a request that arrived over a link to Volgenic (`InProcessAPI`).
+    public internal(set) var viaLink = false
 
     public init(source: Source) {
         coreContext = .init(source: source)
         webSocket = .init()
         requestId = Identifiers.requestTraceId()
+    }
+
+    /// A context for a request that arrives over a link to Volgenic rather than a socket
+    /// (`InProcessAPI`).
+    init(linkLogger: Logger) {
+        coreContext = .init(source: LinkRequestSource(logger: linkLogger))
+        webSocket = .init()
+        requestId = Identifiers.requestTraceId()
+        viaLink = true
     }
 
     public var maxUploadSize: Int { 64 * 1024 }
@@ -102,6 +134,10 @@ public struct GatewayRequestContext: RequestContext, WebSocketRequestContext {
         guard let principal else { throw APIError.missingToken }
         return principal
     }
+}
+
+struct LinkRequestSource: RequestContextSource {
+    let logger: Logger
 }
 
 // MARK: Header names
@@ -189,11 +225,11 @@ func parseChatId(_ raw: String, field: String) throws -> Int64 {
 }
 
 /// Reads and parses the JSON body (object required). Over 64 KiB → `413 payload_too_large`.
-func jsonBody(_ request: Request, _ context: GatewayRequestContext) async throws -> JSONObjectValue {
+func jsonBody(_ request: Request, _ context: GatewayRequestContext, limit: Int? = nil) async throws -> JSONObjectValue {
     var request = request
     let buffer: ByteBuffer
     do {
-        buffer = try await request.collectBody(upTo: context.maxUploadSize)
+        buffer = try await request.collectBody(upTo: limit ?? context.maxUploadSize)
     } catch is NIOTooManyBytesError {
         throw APIError.payloadTooLarge
     } catch let error as HTTPError where error.status == .contentTooLarge {
